@@ -164,6 +164,52 @@ CREATE TABLE public.submissions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 12. SUPPORT TICKETS
+CREATE TABLE public.support_tickets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  order_id UUID REFERENCES public.orders(id) ON DELETE SET NULL,
+  subject TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'waiting_client', 'resolved', 'closed')),
+  priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 13. SUPPORT MESSAGES
+CREATE TABLE public.support_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ticket_id UUID NOT NULL REFERENCES public.support_tickets(id) ON DELETE CASCADE,
+  client_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  by TEXT NOT NULL CHECK (by IN ('client', 'admin')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 14. NOTIFICATIONS
+CREATE TABLE public.notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'info' CHECK (type IN ('info', 'warning', 'success', 'error')),
+  read BOOLEAN NOT NULL DEFAULT FALSE,
+  link TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 15. ACTIVITY LOGS
+CREATE TABLE public.activity_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  actor_email TEXT,
+  action_type TEXT NOT NULL,
+  action_label TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  entity_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ═══════════════════════════════════════════════════════════════
 -- ROW LEVEL SECURITY (RLS)
 -- ═══════════════════════════════════════════════════════════════
@@ -179,6 +225,10 @@ ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.support_tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.support_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 
 -- Helper: Check if user is admin
 CREATE OR REPLACE FUNCTION public.is_admin()
@@ -239,6 +289,24 @@ CREATE POLICY "Anyone can insert chat messages" ON public.chat_messages FOR INSE
 CREATE POLICY "Admins manage submissions" ON public.submissions FOR ALL USING (public.is_admin());
 CREATE POLICY "Anyone can insert submissions" ON public.submissions FOR INSERT WITH CHECK (true);
 
+-- SUPPORT: clients own tickets, admins all
+CREATE POLICY "Clients view own tickets" ON public.support_tickets FOR SELECT USING (client_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Clients insert own tickets" ON public.support_tickets FOR INSERT WITH CHECK (client_id = auth.uid());
+CREATE POLICY "Admins manage tickets" ON public.support_tickets FOR ALL USING (public.is_admin());
+
+CREATE POLICY "Clients view own support messages" ON public.support_messages FOR SELECT USING (client_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Clients insert own support messages" ON public.support_messages FOR INSERT WITH CHECK (client_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Admins manage support messages" ON public.support_messages FOR ALL USING (public.is_admin());
+
+-- NOTIFICATIONS
+CREATE POLICY "Clients view own notifications" ON public.notifications FOR SELECT USING (client_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Clients update own notifications" ON public.notifications FOR UPDATE USING (client_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Admins manage notifications" ON public.notifications FOR ALL USING (public.is_admin());
+
+-- ACTIVITY LOGS (admin-only)
+CREATE POLICY "Admins view activity logs" ON public.activity_logs FOR SELECT USING (public.is_admin());
+CREATE POLICY "Admins insert activity logs" ON public.activity_logs FOR INSERT WITH CHECK (public.is_admin());
+
 -- ═══════════════════════════════════════════════════════════════
 -- INDEXES
 -- ═══════════════════════════════════════════════════════════════
@@ -250,6 +318,10 @@ CREATE INDEX idx_invoices_client ON public.invoices(client_id);
 CREATE INDEX idx_order_updates_order ON public.order_updates(order_id);
 CREATE INDEX idx_leads_email ON public.leads(email);
 CREATE INDEX idx_chat_messages_session ON public.chat_messages(session_id);
+CREATE INDEX idx_support_tickets_client ON public.support_tickets(client_id);
+CREATE INDEX idx_support_messages_ticket ON public.support_messages(ticket_id);
+CREATE INDEX idx_notifications_client ON public.notifications(client_id);
+CREATE INDEX idx_activity_logs_created ON public.activity_logs(created_at DESC);
 
 -- ═══════════════════════════════════════════════════════════════
 -- AUTO UPDATE TIMESTAMPS
@@ -266,6 +338,7 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER update_profiles_timestamp BEFORE UPDATE ON public.profiles FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_orders_timestamp BEFORE UPDATE ON public.orders FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_invoices_timestamp BEFORE UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER update_support_tickets_timestamp BEFORE UPDATE ON public.support_tickets FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ═══════════════════════════════════════════════════════════════
 -- SEED ADMIN USER (run after first signup)

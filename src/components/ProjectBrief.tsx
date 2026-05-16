@@ -2,6 +2,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import emailjs from '@emailjs/browser';
 import { saveProjectSubmission, getSettings, logActivity } from '../utils/storage';
+import { isSupabaseAuthEnabled } from '../utils/auth';
+import { createSubmissionInSupabase } from '../utils/supabaseData';
 
 const bdL = '#353850'; const tSec = '#9da2be'; const tMut = '#6b7094'; const bgIn = '#2e3148';
 
@@ -52,6 +54,20 @@ export default function ProjectBrief() {
       industry: form.industry, features: pricing?.addons.map(a => a.name) || [],
       description: `${form.description}\n\n--- PRICING DETAILS ---\n${pricingSummary}`,
     });
+
+    if (isSupabaseAuthEnabled()) {
+      await createSubmissionInSupabase({
+        email: form.email,
+        name: form.name,
+        company: form.company || undefined,
+        projectType: pricing?.plan || 'Not selected',
+        budget: pricing ? `$${pricing.total}` : 'Not specified',
+        timeline: pricing?.delivery || 'Not specified',
+        industry: form.industry,
+        features: pricing?.addons.map((a) => a.name) || [],
+        description: `${form.description}\n\n--- PRICING DETAILS ---\n${pricingSummary}`,
+      });
+    }
 
     const settings = getSettings();
     if (settings.email.enabled && settings.email.serviceId && settings.email.publicKey) {

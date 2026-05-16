@@ -14,6 +14,17 @@ import {
   getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
   addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
 } from '../utils/storage';
+import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut } from '../utils/auth';
+import {
+  fetchAdminSnapshot,
+  updateLeadStatusInSupabase,
+  updateSubmissionStatusInSupabase,
+  addSupportMessageInSupabase,
+  updateSupportTicketStatusInSupabase,
+  deleteLeadInSupabase,
+  deleteSubmissionInSupabase,
+  deleteChatSessionInSupabase,
+} from '../utils/supabaseData';
 import { downloadInvoice, emailInvoiceToClient } from '../utils/invoice';
 
 type Tab = 'dashboard' | 'leads' | 'submissions' | 'chats' | 'settings' | 'users' | 'clients' | 'activity' | 'support';
@@ -84,21 +95,52 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [newOrd, setNewOrd] = useState({ service: '', pkg: '', price: 0, notes: '', installments: 1 });
 
   useEffect(() => {
-    const session = getAdminSession();
-    if (session) {
-      setIsAuth(true); setCurrentUser(session);
-      // Auto-check overdue on login
-      const held = checkOverdueInstallments();
-      const deadlines = checkOverdueDeadlines();
-      if (held > 0 || deadlines > 0) {
-        addNotification('Auto-Check', `${held} orders held for overdue payments, ${deadlines} deadlines overdue`, 'warning');
+    const initAuth = async () => {
+      if (isSupabaseAuthEnabled()) {
+        const session = await getSupabasePortalSession();
+        if (session && ['owner', 'admin', 'viewer'].includes(session.role)) {
+          setIsAuth(true);
+          setCurrentUser({ id: session.id, email: session.email, role: session.role });
+        }
+        return;
       }
-    }
+
+      const session = getAdminSession();
+      if (session) {
+        setIsAuth(true); setCurrentUser(session);
+        // Auto-check overdue on login
+        const held = checkOverdueInstallments();
+        const deadlines = checkOverdueDeadlines();
+        if (held > 0 || deadlines > 0) {
+          addNotification('Auto-Check', `${held} orders held for overdue payments, ${deadlines} deadlines overdue`, 'warning');
+        }
+      }
+    };
+
+    void initAuth();
   }, []);
 
-  useEffect(() => { if (isAuth) reload(); }, [isAuth, tab]);
+  useEffect(() => { if (isAuth) void reload(); }, [isAuth, tab]);
 
-  const reload = () => {
+  const reload = async () => {
+    if (isSupabaseAuthEnabled()) {
+      const snap = await fetchAdminSnapshot();
+      setLeads(snap.leads);
+      setSubmissions(snap.submissions);
+      setChats(snap.chats);
+      setClients2(snap.clients);
+      setAllOrders(snap.orders);
+      setAllInvoices(snap.invoices);
+      setAllTickets(snap.tickets);
+      // Keep existing derived/local widgets available until full analytics moves to Supabase.
+      setStats(getDashboardStats());
+      setSettings(getSettings());
+      setUsers(getAdminUsers());
+      setActivities2(getActivities());
+      setFullStats(getFullDashboardStats());
+      return;
+    }
+
     setLeads(getLeads()); setSubmissions(getProjectSubmissions()); setChats(getChatSessions());
     setStats(getDashboardStats()); setSettings(getSettings()); setUsers(getAdminUsers());
     setClients2(getClients()); setAllOrders(getOrders()); setAllInvoices(getInvoices());
@@ -106,13 +148,38 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     setAllTickets(getTickets());
   };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
+    if (isSupabaseAuthEnabled()) {
+      const { session, error } = await supabaseSignIn(loginEmail, loginPass);
+      if (!session) {
+        setLoginError(error || 'Invalid email or password');
+        return;
+      }
+      if (!['owner', 'admin', 'viewer'].includes(session.role)) {
+        setLoginError('This account is not allowed in Admin Panel.');
+        return;
+      }
+      setIsAuth(true);
+      setCurrentUser({ id: session.id, email: session.email, role: session.role });
+      setLoginError('');
+      return;
+    }
+
     const user = verifyAdminLogin(loginEmail, loginPass);
     if (user) { setAdminAuth(user); setIsAuth(true); setCurrentUser({ id: user.id, email: user.email, role: user.role }); setLoginError(''); }
     else setLoginError('Invalid email or password');
   };
 
-  const handleLogout = () => { setAdminAuth(null); setIsAuth(false); setCurrentUser(null); onClose(); };
+  const handleLogout = async () => {
+    if (isSupabaseAuthEnabled()) {
+      await supabaseSignOut();
+    } else {
+      setAdminAuth(null);
+    }
+    setIsAuth(false);
+    setCurrentUser(null);
+    onClose();
+  };
 
   const handleSaveSettings = () => { saveSettings(settings); setSaved(true); setTimeout(() => setSaved(false), 3000); };
 
@@ -358,7 +425,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                       {lChats.length > 0 && <span className="px-2 py-0.5 rounded text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/20">💬 {lChats.reduce((a,c)=>a+c.messages.length,0)} msgs</span>}
                       {lSubs.length > 0 && <span className="px-2 py-0.5 rounded text-[10px] bg-violet-500/15 text-violet-400 border border-violet-500/20">📝 {lSubs.length} brief</span>}
                       {lClient && <span className="px-2 py-0.5 rounded text-[10px] bg-green-500/15 text-green-400 border border-green-500/20">👤 Client</span>}
-                      <select value={l.status} onChange={e => { e.stopPropagation(); updateLeadStatus(l.id, e.target.value as Lead['status']); reload(); }}
+                      <select value={l.status} onChange={e => { e.stopPropagation(); if (isSupabaseAuthEnabled()) { void updateLeadStatusInSupabase(l.id, e.target.value as Lead['status']).then(() => reload()); } else { updateLeadStatus(l.id, e.target.value as Lead['status']); void reload(); } }}
                         className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer ${statusColor(l.status)}`} style={{ background: 'transparent' }}>
                         <option value="new">New</option><option value="contacted">Contacted</option><option value="converted">Converted</option>
                       </select>
@@ -370,13 +437,13 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                       <div className="flex flex-wrap gap-2">
                         <a href={`mailto:${l.email}`} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-cyan-glow/10 text-cyan-glow border border-cyan-glow/20">📧 Email</a>
                         <a href={`https://wa.me/?text=Hi! Following up from SpotAware.dev...`} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">📱 WhatsApp</a>
-                        <button onClick={() => { updateLeadStatus(l.id, 'contacted'); reload(); }} className="px-3 py-1.5 rounded-lg text-xs font-medium border hover:bg-white/5" style={{ borderColor: borderLight, color: textSecondary }}>✓ Mark Contacted</button>
+                        <button onClick={() => { if (isSupabaseAuthEnabled()) { void updateLeadStatusInSupabase(l.id, 'contacted').then(() => reload()); } else { updateLeadStatus(l.id, 'contacted'); void reload(); } }} className="px-3 py-1.5 rounded-lg text-xs font-medium border hover:bg-white/5" style={{ borderColor: borderLight, color: textSecondary }}>✓ Mark Contacted</button>
                         <button onClick={() => {
                           const client = convertLeadToClient(l.id);
                           if (client) { alert(`Client account created for ${l.email}\nPassword: Welcome123`); reload(); }
                           else { alert('Already a client or error'); }
                         }} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">🎉 Convert to Client</button>
-                        <button onClick={() => { if(confirm('Delete lead?')){deleteLead(l.id);reload();}}} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 ml-auto">Delete</button>
+                        <button onClick={() => { if(confirm('Delete lead?')){ if (isSupabaseAuthEnabled()) { void deleteLeadInSupabase(l.id).then(() => reload()); } else { deleteLead(l.id); void reload(); } }}} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 ml-auto">Delete</button>
                       </div>
                       {/* Chat history */}
                       {lChats.length > 0 && (
@@ -437,7 +504,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                       </div>
                       <div className="flex items-center gap-2">
                         {sClient && <span className="px-2 py-0.5 rounded text-[10px] bg-green-500/15 text-green-400 border border-green-500/20">👤 Client</span>}
-                        <select value={s.status} onChange={e => { e.stopPropagation(); updateSubmissionStatus(s.id, e.target.value as ProjectSubmission['status']); reload(); }}
+                        <select value={s.status} onChange={e => { e.stopPropagation(); if (isSupabaseAuthEnabled()) { void updateSubmissionStatusInSupabase(s.id, e.target.value as ProjectSubmission['status']).then(() => reload()); } else { updateSubmissionStatus(s.id, e.target.value as ProjectSubmission['status']); void reload(); } }}
                           className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer ${statusColor(s.status)}`} style={{ background: 'transparent' }}>
                           <option value="new">New</option><option value="reviewed">Reviewed</option><option value="proposal_sent">Proposal Sent</option><option value="converted">Converted</option>
                         </select>
@@ -471,8 +538,8 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-cyan-glow/10 text-cyan-glow border border-cyan-glow/20">📧 Reply to Client</a>
                         <a href={`https://wa.me/?text=Hi ${s.name}! Thanks for your project brief for ${s.projectType}...`} target="_blank" rel="noopener noreferrer"
                           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">📱 WhatsApp</a>
-                        <button onClick={() => { updateSubmissionStatus(s.id, 'proposal_sent'); reload(); }} className="px-3 py-1.5 rounded-lg text-xs font-medium border hover:bg-white/5" style={{ borderColor: borderLight, color: textSecondary }}>📄 Mark Proposal Sent</button>
-                        <button onClick={() => { if(confirm('Delete submission?')){deleteSubmission(s.id);setSelSub(null);reload();}}} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 ml-auto">Delete</button>
+                        <button onClick={() => { if (isSupabaseAuthEnabled()) { void updateSubmissionStatusInSupabase(s.id, 'proposal_sent').then(() => reload()); } else { updateSubmissionStatus(s.id, 'proposal_sent'); void reload(); } }} className="px-3 py-1.5 rounded-lg text-xs font-medium border hover:bg-white/5" style={{ borderColor: borderLight, color: textSecondary }}>📄 Mark Proposal Sent</button>
+                        <button onClick={() => { if(confirm('Delete submission?')){ if (isSupabaseAuthEnabled()) { void deleteSubmissionInSupabase(s.id).then(() => { setSelSub(null); reload(); }); } else { deleteSubmission(s.id); setSelSub(null); void reload(); } }}} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 ml-auto">Delete</button>
                       </div>
                       {/* Lead link */}
                       {sLead && (
@@ -527,7 +594,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                       <div className="p-3 flex gap-2 border-t" style={{ borderColor: borderLight, background: bgElevated }}>
                         <a href={`mailto:${c.email}`} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-cyan-glow/10 text-cyan-glow border border-cyan-glow/20">📧 Email</a>
                         <button onClick={() => { setTab('leads'); }} className="px-3 py-1.5 rounded-lg text-xs font-medium border hover:bg-white/5" style={{ borderColor: borderLight, color: textSecondary }}>👤 View Lead</button>
-                        <button onClick={() => { deleteChatSession(c.id); setSelChat(null); reload(); }} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 ml-auto">Delete</button>
+                        <button onClick={() => { if (isSupabaseAuthEnabled()) { void deleteChatSessionInSupabase(c.id).then(() => { setSelChat(null); reload(); }); } else { deleteChatSession(c.id); setSelChat(null); void reload(); } }} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 ml-auto">Delete</button>
                       </div>
                     </div>
                   )}
@@ -989,7 +1056,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <select value={t.status} onChange={e => { e.stopPropagation(); updateTicketStatus(t.id, e.target.value as SupportTicket['status']); if (e.target.value === 'resolved') { addNotification('Ticket Resolved', `Your ticket "${t.subject}" has been resolved.`, 'success', t.clientId); } reload(); }}
+                      <select value={t.status} onChange={e => { e.stopPropagation(); const nextStatus = e.target.value as SupportTicket['status']; if (isSupabaseAuthEnabled()) { void updateSupportTicketStatusInSupabase(t.id, nextStatus).then(() => reload()); } else { updateTicketStatus(t.id, nextStatus); void reload(); } if (nextStatus === 'resolved') { addNotification('Ticket Resolved', `Your ticket "${t.subject}" has been resolved.`, 'success', t.clientId); } }}
                         className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer ${sColors[t.status]}`} style={{ background: 'transparent' }}>
                         <option value="open">Open</option><option value="in_progress">In Progress</option><option value="waiting_client">Waiting Client</option><option value="resolved">Resolved</option><option value="closed">Closed</option>
                       </select>
@@ -1012,9 +1079,17 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                         <input value={adminTicketReply} onChange={e => setAdminTicketReply(e.target.value)} placeholder="Reply to client..." className="flex-1 px-3 py-2 rounded-xl text-[13px] text-white focus:outline-none placeholder:text-[#4a4f6a]" style={{ background: bgInput, border: `1px solid ${borderLight}` }} />
                         <button onClick={() => {
                           if (!adminTicketReply.trim()) return;
+                          if (isSupabaseAuthEnabled()) {
+                            void addSupportMessageInSupabase(t.id, t.clientId, adminTicketReply, 'admin').then(() => {
+                              addNotification('Support Reply', `New reply on your ticket: "${t.subject}"`, 'info', t.clientId);
+                              setAdminTicketReply('');
+                              reload();
+                            });
+                            return;
+                          }
                           addTicketMessage(t.id, adminTicketReply, 'admin');
                           addNotification('Support Reply', `New reply on your ticket: "${t.subject}"`, 'info', t.clientId);
-                          setAdminTicketReply(''); reload();
+                          setAdminTicketReply(''); void reload();
                         }} className="px-4 py-2 rounded-xl text-xs font-medium bg-cyan-glow text-midnight">Send</button>
                       </div>
                     </div>

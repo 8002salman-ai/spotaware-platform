@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   verifyClientLogin, registerClient, setClientAuth, getClientSession,
   getClientOrders, getClientInvoices, createOrder, addOrderUpdate, updateClientProfile,
@@ -10,6 +10,18 @@ import {
   type Order, type Invoice, type SupportTicket, type AppNotification, type OrderNote,
 } from '../utils/storage';
 import { downloadInvoice } from '../utils/invoice';
+import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp } from '../utils/auth';
+import {
+  fetchClientOrders,
+  fetchClientInvoices,
+  createClientOrderInSupabase,
+  addOrderUpdateInSupabase,
+  updateProfileInSupabase,
+  fetchClientSupport,
+  createSupportTicketInSupabase,
+  addSupportMessageInSupabase,
+  markAllNotificationsReadInSupabase,
+} from '../utils/supabaseData';
 
 const bg = 'var(--t-bg,#0f1923)'; const bgCard = 'var(--t-card,#152230)'; const bgEl = 'var(--t-el,#1a2d3d)'; const bgIn = 'var(--t-in,#1f3344)';
 const bd = 'var(--t-bd,#264055)'; const bdL = 'var(--t-bdl,#1e3548)'; const tSec = 'var(--t-sec,#8ab4d0)'; const tMut = 'var(--t-mut,#4d7a96)';
@@ -86,46 +98,137 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   const [notes, setNotes] = useState<OrderNote[]>([]);
   const [newNote, setNewNote] = useState('');
 
+  const loadPortalData = useCallback(async (clientId: string) => {
+    if (isSupabaseAuthEnabled()) {
+      const [sbOrders, sbInvoices, support] = await Promise.all([
+        fetchClientOrders(clientId),
+        fetchClientInvoices(clientId),
+        fetchClientSupport(clientId),
+      ]);
+      setOrders(sbOrders);
+      setInvoices(sbInvoices);
+      setTickets(support.tickets);
+      setNotifs(support.notifications);
+      return;
+    }
+
+    setOrders(getClientOrders(clientId));
+    setInvoices(getClientInvoices(clientId));
+    setTickets(getClientTickets(clientId));
+    setNotifs(getNotifications(clientId));
+  }, []);
+
   useEffect(() => {
-    const s = getClientSession();
-    if (s) { setAuth(true); setSession(s); }
+    const initAuth = async () => {
+      if (isSupabaseAuthEnabled()) {
+        const s = await getSupabasePortalSession();
+        if (!s) return;
+        if (s.role !== 'client') {
+          setError('This account is not a client account.');
+          return;
+        }
+        setAuth(true);
+        setSession({ id: s.id, name: s.name, email: s.email });
+        return;
+      }
+
+      const s = getClientSession();
+      if (s) { setAuth(true); setSession(s); }
+    };
+    void initAuth();
   }, []);
 
   useEffect(() => {
     if (session) {
-      setOrders(getClientOrders(session.id));
-      setInvoices(getClientInvoices(session.id));
-      setTickets(getClientTickets(session.id));
-      setNotifs(getNotifications(session.id));
+      void loadPortalData(session.id);
       const c = getClients().find(x => x.id === session.id);
       if (c) setProfile({ name: c.name, email: c.email, company: c.company || '', phone: c.phone || '', password: '' });
     }
-  }, [session, view]);
+  }, [session, view, loadPortalData]);
 
   useEffect(() => {
     if (selOrder) { setNotes(getOrderNotes(selOrder.id)); }
   }, [selOrder]);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
+    if (isSupabaseAuthEnabled()) {
+      const { session: authSession, error: authError } = await supabaseSignIn(form.email, form.password);
+      if (!authSession) {
+        setError(authError || 'Invalid email or password');
+        return;
+      }
+      if (authSession.role !== 'client') {
+        setError('This account is not a client account.');
+        return;
+      }
+      setAuth(true);
+      setSession({ id: authSession.id, name: authSession.name, email: authSession.email });
+      setError('');
+      return;
+    }
+
     const u = verifyClientLogin(form.email, form.password);
     if (u) { setClientAuth(u); setAuth(true); setSession({ id: u.id, name: u.name, email: u.email }); setError(''); }
     else setError('Invalid email or password');
   };
 
-  const handleSignup = () => {
+  const handleSignup = async () => {
     if (!form.name || !form.email || !form.password) { setError('All fields required'); return; }
+
+    if (isSupabaseAuthEnabled()) {
+      const { session: authSession, error: authError } = await supabaseSignUp({
+        email: form.email,
+        password: form.password,
+        name: form.name,
+        company: form.company,
+        role: 'client',
+      });
+
+      if (authError) {
+        setError(authError);
+        return;
+      }
+      if (!authSession) {
+        setError('Signup created. Please verify email, then login.');
+        return;
+      }
+      setAuth(true);
+      setSession({ id: authSession.id, name: authSession.name, email: authSession.email });
+      setError('');
+      return;
+    }
+
     const u = registerClient(form.name, form.email, form.password, form.company);
     if (!u) { setError('Email already registered'); return; }
     setClientAuth(u); setAuth(true); setSession({ id: u.id, name: u.name, email: u.email }); setError('');
   };
 
-  const handleLogout = () => { setClientAuth(null); setAuth(false); setSession(null); onClose(); };
+  const handleLogout = async () => {
+    if (isSupabaseAuthEnabled()) {
+      await supabaseSignOut();
+    } else {
+      setClientAuth(null);
+    }
+    setAuth(false);
+    setSession(null);
+    onClose();
+  };
 
   const handlePlaceOrder = async () => {
     if (!orderService || !session) return;
     const svc = SERVICES.flatMap(c => c.items).find(i => i.name === orderService);
     if (!svc) return;
-    createOrder({ clientId: session.id, service: svc.name, package: svc.desc, price: svc.price, status: 'pending', notes: orderNotes, adminNotes: '' });
+    if (isSupabaseAuthEnabled()) {
+      await createClientOrderInSupabase({
+        clientId: session.id,
+        service: svc.name,
+        package: svc.desc,
+        price: svc.price,
+        notes: orderNotes,
+      });
+    } else {
+      createOrder({ clientId: session.id, service: svc.name, package: svc.desc, price: svc.price, status: 'pending', notes: orderNotes, adminNotes: '' });
+    }
     // Try email notification to admin
     const s = getSettings();
     if (s.email.enabled && s.email.serviceId && s.email.publicKey && s.email.templateIdLead) {
@@ -141,27 +244,41 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     }
     logActivity('order', 'New Order', `${svc.name} — $${svc.price}`, undefined, session.email);
     setOrderService(''); setOrderNotes('');
-    setOrders(getClientOrders(session.id));
+    await loadPortalData(session.id);
     setView('orders');
   };
 
-  const handleSendUpdate = () => {
+  const handleSendUpdate = async () => {
     if (!updateMsg.trim() || !selOrder) return;
-    addOrderUpdate(selOrder.id, updateMsg, 'client');
+    if (isSupabaseAuthEnabled()) {
+      await addOrderUpdateInSupabase(selOrder.id, updateMsg, 'client');
+    } else {
+      addOrderUpdate(selOrder.id, updateMsg, 'client');
+    }
     setUpdateMsg('');
-    setOrders(getClientOrders(session!.id));
-    setSelOrder(getClientOrders(session!.id).find(o => o.id === selOrder.id) || null);
+    await loadPortalData(session!.id);
+    const refreshedOrders = isSupabaseAuthEnabled() ? await fetchClientOrders(session!.id) : getClientOrders(session!.id);
+    setSelOrder(refreshedOrders.find(o => o.id === selOrder.id) || null);
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!session) return;
     const updates: Record<string, string> = {};
     if (profile.name) updates.name = profile.name;
     if (profile.email) updates.email = profile.email;
     if (profile.company) updates.company = profile.company;
     if (profile.phone) updates.phone = profile.phone;
-    if (profile.password) updates.password = profile.password;
-    updateClientProfile(session.id, updates);
+    if (isSupabaseAuthEnabled()) {
+      await updateProfileInSupabase(session.id, {
+        name: updates.name,
+        email: updates.email,
+        company: updates.company,
+        phone: updates.phone,
+      });
+    } else {
+      if (profile.password) updates.password = profile.password;
+      updateClientProfile(session.id, updates);
+    }
     setProfileSaved(true); setTimeout(() => setProfileSaved(false), 2000);
   };
 
@@ -555,9 +672,17 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
                 <textarea value={ticketMsg} onChange={e => setTicketMsg(e.target.value)} placeholder="Describe your issue or request..." rows={3} className="w-full px-4 py-2.5 rounded-xl text-[13px] text-white focus:outline-none resize-none placeholder:text-[#4a4f6a]" style={{ background: bgIn, border: `1px solid ${bd}` }} />
                 <button onClick={() => {
                   if (!ticketSubject || !ticketMsg || !session) return;
-                  createTicket(session.id, ticketSubject, ticketMsg);
+                  if (isSupabaseAuthEnabled()) {
+                    void createSupportTicketInSupabase({
+                      clientId: session.id,
+                      subject: ticketSubject,
+                      content: ticketMsg,
+                    }).then(() => loadPortalData(session.id));
+                  } else {
+                    createTicket(session.id, ticketSubject, ticketMsg);
+                  }
                   setTicketSubject(''); setTicketMsg('');
-                  setTickets(getClientTickets(session.id));
+                  if (!isSupabaseAuthEnabled()) setTickets(getClientTickets(session.id));
                 }} disabled={!ticketSubject || !ticketMsg} className="px-5 py-2.5 rounded-xl text-[13px] font-semibold bg-cyan-glow text-midnight hover:bg-cyan-soft disabled:opacity-40 transition-colors">Submit Ticket</button>
               </div>
             </div>
@@ -594,7 +719,22 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
                       {t.status !== 'closed' && (
                         <div className="flex gap-2">
                           <input value={ticketReply} onChange={e => setTicketReply(e.target.value)} placeholder="Reply..." className="flex-1 px-3 py-2 rounded-xl text-[13px] text-white focus:outline-none placeholder:text-[#4a4f6a]" style={{ background: bgIn, border: `1px solid ${bdL}` }} />
-                          <button onClick={() => { if (!ticketReply.trim()) return; addTicketMessage(t.id, ticketReply, 'client'); setTicketReply(''); setTickets(getClientTickets(session!.id)); setSelTicket(getClientTickets(session!.id).find(x => x.id === t.id) || null); }} className="px-4 py-2 rounded-xl text-xs font-medium bg-cyan-glow text-midnight">Send</button>
+                          <button onClick={() => {
+                            if (!ticketReply.trim()) return;
+                            if (isSupabaseAuthEnabled()) {
+                              void addSupportMessageInSupabase(t.id, session!.id, ticketReply, 'client').then(async () => {
+                                setTicketReply('');
+                                await loadPortalData(session!.id);
+                                const refreshed = await fetchClientSupport(session!.id);
+                                setSelTicket(refreshed.tickets.find(x => x.id === t.id) || null);
+                              });
+                              return;
+                            }
+                            addTicketMessage(t.id, ticketReply, 'client');
+                            setTicketReply('');
+                            setTickets(getClientTickets(session!.id));
+                            setSelTicket(getClientTickets(session!.id).find(x => x.id === t.id) || null);
+                          }} className="px-4 py-2 rounded-xl text-xs font-medium bg-cyan-glow text-midnight">Send</button>
                         </div>
                       )}
                     </div>
@@ -611,7 +751,15 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
           <div className="max-w-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-xl font-bold text-white">Notifications</h2>
-              {notifs.some(n => !n.read) && <button onClick={() => { markAllNotifsRead(session?.id); setNotifs(getNotifications(session?.id)); }} className="text-xs text-cyan-glow hover:underline">Mark all read</button>}
+              {notifs.some(n => !n.read) && <button onClick={() => {
+                if (!session?.id) return;
+                if (isSupabaseAuthEnabled()) {
+                  void markAllNotificationsReadInSupabase(session.id).then(() => loadPortalData(session.id));
+                  return;
+                }
+                markAllNotifsRead(session.id);
+                setNotifs(getNotifications(session.id));
+              }} className="text-xs text-cyan-glow hover:underline">Mark all read</button>}
             </div>
             {notifs.map(n => {
               const icons: Record<string, string> = { info: 'ℹ️', warning: '⚠️', success: '✅', error: '❌' };

@@ -2,6 +2,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useRef, useEffect } from 'react';
 import emailjs from '@emailjs/browser';
 import { saveNewLead, saveChatSession, getSettings, logActivity, type ChatSession } from '../utils/storage';
+import { isSupabaseAuthEnabled } from '../utils/auth';
+import { createLeadInSupabase, upsertChatSessionInSupabase } from '../utils/supabaseData';
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -67,7 +69,18 @@ export default function ChatAgent() {
 
   useEffect(() => {
     if (sessionId && leadId && messages.length > 0) {
-      saveChatSession({ id: sessionId, leadId, email: email || 'anonymous', messages: messages.map(m => ({ id: m.id, role: m.role, content: m.content, timestamp: m.timestamp })), startedAt: messages[0]?.timestamp || new Date(), lastMessageAt: messages[messages.length - 1]?.timestamp || new Date() } as ChatSession);
+      const sessionData = { id: sessionId, leadId, email: email || 'anonymous', messages: messages.map(m => ({ id: m.id, role: m.role, content: m.content, timestamp: m.timestamp })), startedAt: messages[0]?.timestamp || new Date(), lastMessageAt: messages[messages.length - 1]?.timestamp || new Date() } as ChatSession;
+      saveChatSession(sessionData);
+      if (isSupabaseAuthEnabled()) {
+        void upsertChatSessionInSupabase({
+          id: sessionData.id,
+          leadId: sessionData.leadId,
+          email: sessionData.email,
+          startedAt: sessionData.startedAt,
+          lastMessageAt: sessionData.lastMessageAt,
+          messages: sessionData.messages,
+        });
+      }
     }
   }, [messages, sessionId, leadId, email]);
 
@@ -77,7 +90,16 @@ export default function ChatAgent() {
   };
 
   const startChat = async (withEmail: boolean = true) => {
-    if (withEmail && email.trim() && email.includes('@')) { setEmailSubmitting(true); const lead = saveNewLead(email.trim()); setLeadId(lead.id); logActivity('lead', 'New Lead', 'Captured via chatbot', lead.id, email.trim()); await sendEmailNotification(email.trim()); } else { setLeadId(`anon_${Date.now()}`); }
+    if (withEmail && email.trim() && email.includes('@')) {
+      setEmailSubmitting(true);
+      const lead = saveNewLead(email.trim());
+      setLeadId(lead.id);
+      logActivity('lead', 'New Lead', 'Captured via chatbot', lead.id, email.trim());
+      if (isSupabaseAuthEnabled()) {
+        await createLeadInSupabase({ email: email.trim(), source: 'chat' });
+      }
+      await sendEmailNotification(email.trim());
+    } else { setLeadId(`anon_${Date.now()}`); }
     setSessionId(`chat_${Date.now()}`); setEmailCaptured(true); setEmailSubmitting(false);
     setMessages([{ id: Date.now().toString(), role: 'assistant', content: email.trim() ? `Got it! 📧 We'll reach out at ${email}.\n\nI'm SpotBot — what can I help you with?` : `Hey! 👋 I'm SpotBot — your AI assistant.\n\nWhat would you like to know?`, timestamp: new Date() }]);
   };
