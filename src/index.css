@@ -1,0 +1,196 @@
+@import "tailwindcss";
+
+:root {
+  --ta: #3385ff;
+  --ta-soft: #5c9eff;
+  --tv: #7357ff;
+  --t-bg: #181d24;
+  --t-card: #202730;
+  --t-el: #28313b;
+  --t-in: #303947;
+  --t-bd: #3a4652;
+  --t-bdl: #2f3944;
+  --t-sec: #979fab;
+  --t-mut: #5c6470;
+  --t-glass: rgba(31,37,41,0.82);
+  --t-glass-s: rgba(37,43,49,0.93);
+  --t-primary: #e4e7eb;
+}
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  --color-cyan-glow: var(--ta, #00e5ff);
+  --color-cyan-soft: var(--ta-soft, #67f0ff);
+  --color-violet-accent: var(--tv, #a78bfa);
+  --color-violet-deep: #7c3aed;
+  --color-surface: var(--t-bg, #0f1923);
+  --color-surface-elevated: var(--t-el, #1a2d3d);
+  --color-surface-card: var(--t-card, #152230);
+  --color-charcoal: #eaecf4;
+  --color-charcoal-light: #bcc0d4;
+  --color-gray-soft: var(--t-bd, #264055);
+  --color-gray-medium: var(--t-mut, #4d7a96);
+  --color-glass: var(--t-glass, rgba(21,34,48,0.7));
+  --color-glass-strong: var(--t-glass-s, rgba(26,45,61,0.9));
+  --color-midnight: #0a1218;
+  --color-midnight-light: var(--t-bdl, #1e3548);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--t-bg, #0f1923);
+  color: #eaecf4;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 16px;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  transition: background 0.5s ease;
+}
+
+@media (max-width: 640px) {
+  body {
+    font-size: 15.5px;
+    line-height: 1.6;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button,
+  a {
+    transition: transform 180ms ease, filter 200ms ease, box-shadow 220ms ease;
+  }
+
+  button:hover,
+  a:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.03);
+  }
+
+  button:active,
+  a:active {
+    transform: translateY(0);
+  }
+}
+
+::selection {
+  background: rgba(0, 229, 255, 0.25);
+  color: #ffffff;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ta, rgba(0,229,255,0.25)); border-radius: 4px; opacity: 0.4; }
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.glass-panel {
+  background: var(--t-glass, rgba(21,34,48,0.7));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-strong {
+  background: var(--t-glass-s, rgba(26,45,61,0.9));
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.neon-border {
+  border: 1px solid color-mix(in srgb, var(--ta, #00e5ff) 20%, transparent);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--ta, #00e5ff) 6%, transparent);
+}
+
+.neon-glow {
+  box-shadow: 0 0 30px color-mix(in srgb, var(--ta, #00e5ff) 12%, transparent), 0 0 60px color-mix(in srgb, var(--ta, #00e5ff) 4%, transparent);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, var(--ta, #00e5ff) 0%, var(--tv, #a78bfa) 50%, var(--ta, #00e5ff) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.premium-shadow {
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.premium-shadow-lg {
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+.animate-gradient { background-size: 200% 200%; animation: gradient-shift 6s ease infinite; }
+
+/* ── Light Theme Overrides ── */
+.light-theme {
+  color-scheme: light;
+}
+
+.light-theme body { color: var(--t-primary, #0f172a); }
+
+.light-theme .text-white { color: var(--t-primary, #0f172a) !important; }
+.light-theme .text-charcoal { color: var(--t-primary, #0f172a) !important; }
+.light-theme .text-charcoal-light { color: var(--t-sec, #3d3730) !important; }
+.light-theme .text-gray-medium { color: var(--t-mut, #7a7268) !important; }
+
+.light-theme .bg-surface { background: var(--t-bg) !important; }
+.light-theme .bg-surface-card { background: var(--t-card) !important; }
+.light-theme .bg-surface-elevated { background: var(--t-el) !important; }
+
+.light-theme .glass-panel {
+  background: rgba(255,255,255,0.75) !important;
+  border-color: rgba(0,0,0,0.06) !important;
+}
+.light-theme .glass-strong {
+  background: rgba(255,255,255,0.92) !important;
+  border-color: rgba(0,0,0,0.08) !important;
+}
+
+.light-theme .premium-shadow { box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04) !important; }
+.light-theme .premium-shadow-lg { box-shadow: 0 2px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06) !important; }
+
+.light-theme .neon-border {
+  border-color: color-mix(in srgb, var(--ta) 15%, transparent) !important;
+  box-shadow: 0 0 15px color-mix(in srgb, var(--ta) 5%, transparent) !important;
+}
+
+.light-theme .text-gradient {
+  background: linear-gradient(135deg, var(--ta) 0%, var(--tv) 50%, var(--ta) 100%) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+.light-theme .bg-cyan-glow { background: var(--ta) !important; }
+.light-theme .text-cyan-glow { color: var(--ta) !important; }
+.light-theme .text-midnight { color: #ffffff !important; }
+.light-theme .bg-midnight { background: #0f172a !important; }
+
+.light-theme ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); }
+
+.light-theme ::selection { background: color-mix(in srgb, var(--ta) 20%, transparent); color: #0f172a; }

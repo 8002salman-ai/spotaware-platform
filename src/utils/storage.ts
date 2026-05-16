@@ -1,0 +1,983 @@
+// Storage utilities for leads, chats, and settings
+
+export interface Lead {
+  id: string;
+  email: string;
+  name?: string;
+  timestamp: Date;
+  source: 'chat' | 'form';
+  status: 'new' | 'contacted' | 'converted';
+}
+
+export interface ChatSession {
+  id: string;
+  leadId: string;
+  email: string;
+  messages: ChatMessage[];
+  startedAt: Date;
+  lastMessageAt: Date;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: Date;
+}
+
+export interface ProjectSubmission {
+  id: string;
+  email: string;
+  name: string;
+  company?: string;
+  projectType: string;
+  budget: string;
+  timeline: string;
+  industry: string;
+  features: string[];
+  description?: string;
+  timestamp: Date;
+  status: 'new' | 'reviewed' | 'proposal_sent' | 'converted';
+}
+
+export interface EmailSettings {
+  enabled: boolean;
+  serviceId: string;
+  templateIdLead: string;
+  templateIdBrief: string;
+  publicKey: string;
+  adminEmail: string;
+}
+
+export interface APISettings {
+  openrouterApiKey: string;
+  openrouterModel: string;
+  useCustomKey: boolean;
+}
+
+export interface WhatsAppSettings {
+  enabled: boolean;
+  phoneNumber: string;
+  welcomeMessage: string;
+}
+
+export interface BackendSettings {
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  stripePublishableKey: string;
+  stripeMode: 'test' | 'live';
+  useSupabase: boolean;
+}
+
+export interface SiteSettings {
+  email: EmailSettings;
+  api: APISettings;
+  whatsapp: WhatsAppSettings;
+  backend: BackendSettings;
+}
+
+const STORAGE_KEYS = {
+  LEADS: 'spotaware_leads',
+  CHATS: 'spotaware_chats',
+  SUBMISSIONS: 'spotaware_submissions',
+  ADMIN_AUTH: 'spotaware_admin_auth',
+  SETTINGS: 'spotaware_settings',
+  CLIENTS: 'spotaware_clients',
+  ORDERS: 'spotaware_orders',
+  INVOICES: 'spotaware_invoices',
+  CLIENT_AUTH: 'spotaware_client_auth',
+};
+
+// ── Client System ──
+export interface ClientUser {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  company?: string;
+  phone?: string;
+  createdAt: Date;
+}
+
+export type OrderStatus = 'pending' | 'in_progress' | 'review' | 'revision' | 'completed' | 'cancelled' | 'on_hold';
+
+export interface PaymentInstallment {
+  id: string;
+  amount: number;
+  dueDate: string;
+  status: 'pending' | 'paid' | 'overdue';
+  paidAt?: Date;
+  label: string; // e.g. "Installment 1 of 4"
+}
+
+export interface Order {
+  id: string;
+  clientId: string;
+  service: string;
+  package: string;
+  price: number;
+  status: OrderStatus;
+  progress: number;
+  notes: string;
+  adminNotes?: string;
+  updates: OrderUpdate[];
+  createdAt: Date;
+  dueDate?: string;
+  // Payment control
+  paymentPlan: 'full' | 'installment';
+  installments: PaymentInstallment[];
+  totalPaid: number;
+  onHold: boolean;
+  holdReason?: 'payment_overdue' | 'client_delay' | 'admin_pause';
+  holdMessage?: string;
+  // Client delay tracking
+  clientDeadlines: ClientDeadline[];
+}
+
+export interface ClientDeadline {
+  id: string;
+  item: string; // e.g. "Logo assets", "Content for homepage"
+  dueDate: string;
+  status: 'pending' | 'received' | 'overdue';
+  receivedAt?: Date;
+}
+
+export interface OrderUpdate {
+  id: string;
+  message: string;
+  by: 'admin' | 'client' | 'system';
+  timestamp: Date;
+}
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  clientId: string;
+  orderId?: string;
+  packageName?: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+  status: 'draft' | 'sent' | 'paid' | 'overdue';
+  note?: string;
+  createdAt: Date;
+  dueDate: string;
+  paidAt?: Date;
+}
+
+export interface InvoiceItem {
+  description: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+  type?: 'package' | 'addon' | 'monthly' | 'custom';
+}
+
+// Texas tax rate
+export const TX_TAX_RATE = 8.25; // 8.25% Texas state + local
+
+// Client CRUD
+export function getClients(): ClientUser[] {
+  try {
+    const d = localStorage.getItem(STORAGE_KEYS.CLIENTS);
+    if (d) return JSON.parse(d);
+    // Seed demo client
+    const demo: ClientUser[] = [
+      { id: 'client_demo', name: 'John Demo', email: 'demo@client.com', password: 'demo123', company: 'Demo Corp', createdAt: new Date() },
+    ];
+    localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(demo));
+    // Seed demo orders
+    const demoOrders: Order[] = [
+      { id: 'ord_demo1', clientId: 'client_demo', service: 'Business Website', package: 'Up to 10 pages, CMS, SEO', price: 1497, status: 'in_progress', progress: 45, notes: 'Need modern design for our consulting firm', adminNotes: '',
+        paymentPlan: 'installment',
+        installments: [
+          { id: 'inst_1', amount: 374.25, dueDate: '2025-01-15', status: 'paid', paidAt: new Date(Date.now() - 10 * 86400000), label: 'Installment 1 of 4' },
+          { id: 'inst_2', amount: 374.25, dueDate: '2025-02-01', status: 'paid', paidAt: new Date(Date.now() - 3 * 86400000), label: 'Installment 2 of 4' },
+          { id: 'inst_3', amount: 374.25, dueDate: '2025-02-15', status: 'pending', label: 'Installment 3 of 4' },
+          { id: 'inst_4', amount: 374.25, dueDate: '2025-03-01', status: 'pending', label: 'Installment 4 of 4' },
+        ],
+        totalPaid: 748.5, onHold: false,
+        clientDeadlines: [
+          { id: 'dl_1', item: 'Company logo files (AI/SVG)', dueDate: '2025-01-20', status: 'received', receivedAt: new Date(Date.now() - 8 * 86400000) },
+          { id: 'dl_2', item: 'Homepage content & images', dueDate: '2025-02-05', status: 'pending' },
+        ],
+        updates: [
+        { id: 'upd_1', message: 'Project started! We will share wireframes in 2 days.', by: 'admin', timestamp: new Date(Date.now() - 3 * 86400000) },
+        { id: 'upd_2', message: 'Sounds great, looking forward to it!', by: 'client', timestamp: new Date(Date.now() - 2 * 86400000) },
+        { id: 'upd_3', message: 'Wireframes ready for review. Please check and share feedback.', by: 'admin', timestamp: new Date(Date.now() - 86400000) },
+      ], createdAt: new Date(Date.now() - 5 * 86400000), dueDate: '2025-02-15' },
+      { id: 'ord_demo2', clientId: 'client_demo', service: 'Logo & Brand Kit', package: 'Logo, colors, typography, guidelines', price: 297, status: 'completed', progress: 100, notes: '', adminNotes: '',
+        paymentPlan: 'full', installments: [], totalPaid: 297, onHold: false, clientDeadlines: [],
+        updates: [
+        { id: 'upd_4', message: 'Brand kit delivered! Files shared via email.', by: 'admin', timestamp: new Date(Date.now() - 10 * 86400000) },
+      ], createdAt: new Date(Date.now() - 15 * 86400000) },
+    ];
+    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(demoOrders));
+    // Seed demo invoices
+    const demoInvoices: Invoice[] = [
+      { id: 'inv_demo1', invoiceNumber: 'INV-1001', clientId: 'client_demo', orderId: 'ord_demo2', packageName: 'Logo & Brand Kit', items: [{ description: 'Logo & Brand Kit — Complete Package', quantity: 1, rate: 297, amount: 297, type: 'package' as const }], subtotal: 297, taxRate: 8.25, taxAmount: 24.49, total: 321.49, status: 'paid', createdAt: new Date(Date.now() - 14 * 86400000), dueDate: '2025-01-20', paidAt: new Date(Date.now() - 12 * 86400000) },
+      { id: 'inv_demo2', invoiceNumber: 'INV-1002', clientId: 'client_demo', orderId: 'ord_demo1', packageName: 'Business Website', items: [{ description: 'Business Website — 50% Upfront Deposit', quantity: 1, rate: 748.5, amount: 748.5, type: 'package' as const }, { description: 'SEO Optimization Add-on', quantity: 1, rate: 497, amount: 497, type: 'addon' as const }], subtotal: 1245.5, taxRate: 8.25, taxAmount: 102.75, total: 1348.25, status: 'sent', note: '50% upfront. Remaining $748.50 due on project completion.\nPost-delivery: 30 days free bug-fix support included.', createdAt: new Date(Date.now() - 4 * 86400000), dueDate: '2025-02-01' },
+    ];
+    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(demoInvoices));
+    return demo;
+  } catch { return []; }
+}
+function saveClients(c: ClientUser[]) { localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(c)); }
+
+export function registerClient(name: string, email: string, password: string, company?: string): ClientUser | null {
+  const clients = getClients();
+  if (clients.find(c => c.email.toLowerCase() === email.toLowerCase())) return null;
+  const client: ClientUser = { id: `client_${Date.now()}`, name, email, password, company, createdAt: new Date() };
+  clients.push(client);
+  saveClients(clients);
+  saveNewLead(email, name, 'form');
+  return client;
+}
+
+export function verifyClientLogin(email: string, password: string): ClientUser | null {
+  return getClients().find(c => c.email.toLowerCase() === email.toLowerCase() && c.password === password) || null;
+}
+
+// Convert lead to client (admin action)
+export function convertLeadToClient(leadId: string, password: string = 'Welcome123'): ClientUser | null {
+  const lead = getLeads().find(l => l.id === leadId);
+  if (!lead) return null;
+  // Check if already a client
+  const existing = getClients().find(c => c.email.toLowerCase() === lead.email.toLowerCase());
+  if (existing) return existing;
+  const client = registerClient(lead.name || lead.email.split('@')[0], lead.email, password);
+  if (client) {
+    updateLeadStatus(leadId, 'converted');
+    logActivity('client', 'Lead Converted', `${lead.email} converted to client`, client.id, lead.email);
+    addNotification('Welcome!', 'Your client account has been created. Login to access your portal.', 'success', client.id);
+  }
+  return client;
+}
+
+// Admin creates order for a client
+export function adminCreateOrder(clientId: string, service: string, pkg: string, price: number, notes: string, installmentCount?: number): Order {
+  const order = createOrder({ clientId, service, package: pkg, price, status: 'pending', notes, adminNotes: '' });
+  // Setup installments if requested
+  if (installmentCount && installmentCount > 1) {
+    const amt = Math.round(price / installmentCount * 100) / 100;
+    const insts = Array.from({ length: installmentCount }, (_, i) => ({
+      id: `inst_${Date.now()}_${i}`,
+      amount: i === installmentCount - 1 ? price - amt * (installmentCount - 1) : amt,
+      dueDate: new Date(Date.now() + (i + 1) * 15 * 86400000).toISOString().split('T')[0],
+      status: 'pending' as const,
+      label: `Installment ${i + 1} of ${installmentCount}`,
+    }));
+    updateOrder(order.id, { paymentPlan: 'installment', installments: insts });
+  }
+  const client = getClients().find(c => c.id === clientId);
+  logActivity('order', 'Order Created', `${service} — $${price} for ${client?.name || 'client'}`, order.id, client?.email);
+  addNotification('New Project', `Your ${service} project has been created! View it in your portal.`, 'success', clientId);
+  return order;
+}
+
+// Check and auto-hold overdue installments
+export function checkOverdueInstallments(): number {
+  const orders = getOrders();
+  const today = new Date().toISOString().split('T')[0];
+  let holdCount = 0;
+  orders.forEach(o => {
+    if (o.status === 'completed' || o.status === 'cancelled' || o.onHold) return;
+    (o.installments || []).forEach(inst => {
+      if (inst.status === 'pending' && inst.dueDate < today) {
+        inst.status = 'overdue';
+      }
+    });
+    const hasOverdue = (o.installments || []).some(i => i.status === 'overdue');
+    if (hasOverdue && !o.onHold) {
+      holdOrder(o.id, 'payment_overdue', 'Installment payment is overdue. Please complete payment to resume your project.');
+      const client = getClients().find(c => c.id === o.clientId);
+      addNotification('Payment Overdue', `Your installment for ${o.service} is overdue. Project paused.`, 'warning', o.clientId);
+      logActivity('payment', 'Payment Overdue', `${o.service} — auto-held`, o.id, client?.email);
+      holdCount++;
+    }
+  });
+  if (holdCount > 0) {
+    const ords = getOrders(); // re-read since holdOrder modifies
+    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(ords));
+  }
+  return holdCount;
+}
+
+// Check overdue client deadlines
+export function checkOverdueDeadlines(): number {
+  const orders = getOrders();
+  const today = new Date().toISOString().split('T')[0];
+  let count = 0;
+  orders.forEach(o => {
+    if (o.status === 'completed' || o.status === 'cancelled') return;
+    (o.clientDeadlines || []).forEach(dl => {
+      if (dl.status === 'pending' && dl.dueDate < today) {
+        markDeadlineOverdue(o.id, dl.id);
+        count++;
+      }
+    });
+  });
+  return count;
+}
+
+export function updateClientProfile(clientId: string, updates: Partial<Pick<ClientUser, 'name' | 'email' | 'company' | 'phone' | 'password'>>): boolean {
+  const clients = getClients();
+  const c = clients.find(x => x.id === clientId);
+  if (!c) return false;
+  Object.assign(c, updates);
+  saveClients(clients);
+  return true;
+}
+
+export function setClientAuth(client: ClientUser | null) {
+  if (client) localStorage.setItem(STORAGE_KEYS.CLIENT_AUTH, JSON.stringify({ id: client.id, name: client.name, email: client.email }));
+  else localStorage.removeItem(STORAGE_KEYS.CLIENT_AUTH);
+}
+
+export function getClientSession(): { id: string; name: string; email: string } | null {
+  try { const d = localStorage.getItem(STORAGE_KEYS.CLIENT_AUTH); return d ? JSON.parse(d) : null; } catch { return null; }
+}
+
+// Orders CRUD
+export function getOrders(): Order[] {
+  try { const d = localStorage.getItem(STORAGE_KEYS.ORDERS); return d ? JSON.parse(d) : []; } catch { return []; }
+}
+function saveOrders(o: Order[]) { localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(o)); }
+
+export function getClientOrders(clientId: string): Order[] { return getOrders().filter(o => o.clientId === clientId); }
+
+export function createOrder(order: Omit<Order, 'id' | 'updates' | 'createdAt' | 'progress' | 'paymentPlan' | 'installments' | 'totalPaid' | 'onHold' | 'clientDeadlines'> & Partial<Pick<Order, 'paymentPlan' | 'installments' | 'totalPaid' | 'onHold' | 'clientDeadlines'>>): Order {
+  const orders = getOrders();
+  const o: Order = { paymentPlan: 'full', installments: [], totalPaid: 0, onHold: false, clientDeadlines: [], ...order, id: `ord_${Date.now()}`, progress: 0, updates: [], createdAt: new Date() };
+  orders.unshift(o);
+  saveOrders(orders);
+  return o;
+}
+
+export function updateOrder(orderId: string, updates: Partial<Order>): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (o) { Object.assign(o, updates); saveOrders(orders); }
+}
+
+export function holdOrder(orderId: string, reason: Order['holdReason'], message: string): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  o.onHold = true;
+  o.holdReason = reason;
+  o.holdMessage = message;
+  o.status = 'on_hold';
+  o.updates.push({ id: `upd_${Date.now()}`, message: `⚠️ Project on hold: ${message}`, by: 'system', timestamp: new Date() });
+  saveOrders(orders);
+}
+
+export function resumeOrder(orderId: string): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  o.onHold = false;
+  o.holdReason = undefined;
+  o.holdMessage = undefined;
+  o.status = 'in_progress';
+  o.updates.push({ id: `upd_${Date.now()}`, message: '✅ Project resumed! Work continues.', by: 'system', timestamp: new Date() });
+  saveOrders(orders);
+}
+
+export function markInstallmentPaid(orderId: string, installmentId: string): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  const inst = o.installments.find(i => i.id === installmentId);
+  if (inst) { inst.status = 'paid'; inst.paidAt = new Date(); o.totalPaid = o.installments.filter(i => i.status === 'paid').reduce((a, i) => a + i.amount, 0); }
+  // Auto resume only when all overdue installments are cleared.
+  const hasOverdueInstallments = o.installments.some(i => i.status === 'overdue');
+  if (o.onHold && o.holdReason === 'payment_overdue' && !hasOverdueInstallments) {
+    o.onHold = false;
+    o.holdReason = undefined;
+    o.holdMessage = undefined;
+    o.status = 'in_progress';
+    o.updates.push({ id: `upd_${Date.now()}`, message: '✅ Payment received — project resumed!', by: 'system', timestamp: new Date() });
+  }
+  saveOrders(orders);
+}
+
+export function addClientDeadline(orderId: string, item: string, dueDate: string): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  o.clientDeadlines.push({ id: `dl_${Date.now()}`, item, dueDate, status: 'pending' });
+  o.updates.push({ id: `upd_${Date.now()}`, message: `📋 Item requested from you: "${item}" — Due by ${dueDate}`, by: 'system', timestamp: new Date() });
+  saveOrders(orders);
+}
+
+export function markDeadlineReceived(orderId: string, deadlineId: string): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  const dl = o.clientDeadlines.find(d => d.id === deadlineId);
+  if (dl) { dl.status = 'received'; dl.receivedAt = new Date(); }
+  saveOrders(orders);
+}
+
+export function markDeadlineOverdue(orderId: string, deadlineId: string): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (!o) return;
+  const dl = o.clientDeadlines.find(d => d.id === deadlineId);
+  if (!dl) return;
+  dl.status = 'overdue';
+  o.onHold = true;
+  o.holdReason = 'client_delay';
+  o.holdMessage = `Waiting for: ${dl.item}. Project timeline paused — payment schedule unaffected.`;
+  o.status = 'on_hold';
+  o.updates.push({ id: `upd_${Date.now()}`, message: `⏸ Project paused — waiting for "${dl.item}" from you. Note: Your payment schedule remains unchanged.`, by: 'system', timestamp: new Date() });
+  saveOrders(orders);
+}
+
+export function addOrderUpdate(orderId: string, message: string, by: 'admin' | 'client' | 'system'): void {
+  const orders = getOrders();
+  const o = orders.find(x => x.id === orderId);
+  if (o) { o.updates.push({ id: `upd_${Date.now()}`, message, by, timestamp: new Date() }); saveOrders(orders); }
+}
+
+// Invoices CRUD
+export function getInvoices(): Invoice[] {
+  try { const d = localStorage.getItem(STORAGE_KEYS.INVOICES); return d ? JSON.parse(d) : []; } catch { return []; }
+}
+function saveInvoices(i: Invoice[]) { localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(i)); }
+
+export function getClientInvoices(clientId: string): Invoice[] { return getInvoices().filter(i => i.clientId === clientId); }
+
+export function createInvoice(inv: Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt'>): Invoice {
+  const invoices = getInvoices();
+  const num = `INV-${String(invoices.length + 1001).padStart(4, '0')}`;
+  const i: Invoice = { ...inv, id: `inv_${Date.now()}`, invoiceNumber: num, createdAt: new Date() };
+  invoices.unshift(i);
+  saveInvoices(invoices);
+  return i;
+}
+
+export function updateInvoice(invoiceId: string, updates: Partial<Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt'>>): Invoice | null {
+  const invoices = getInvoices();
+  const inv = invoices.find(i => i.id === invoiceId);
+  if (!inv) return null;
+  Object.assign(inv, updates);
+  saveInvoices(invoices);
+  return inv;
+}
+
+export function calcTax(subtotal: number, rate: number = TX_TAX_RATE): { taxAmount: number; total: number } {
+  const taxAmount = Math.round(subtotal * rate) / 100;
+  return { taxAmount, total: subtotal + taxAmount };
+}
+
+export function updateInvoiceStatus(invoiceId: string, status: Invoice['status']): void {
+  const invoices = getInvoices();
+  const i = invoices.find(x => x.id === invoiceId);
+  if (i) { i.status = status; if (status === 'paid') i.paidAt = new Date(); saveInvoices(invoices); }
+}
+
+export function deleteInvoice(invoiceId: string): void {
+  saveInvoices(getInvoices().filter(i => i.id !== invoiceId));
+}
+
+// Default Settings
+const DEFAULT_SETTINGS: SiteSettings = {
+  email: {
+    enabled: false,
+    serviceId: '',
+    templateIdLead: '',
+    templateIdBrief: '',
+    publicKey: '',
+    adminEmail: '8002salman@gmail.com',
+  },
+  api: {
+    openrouterApiKey: '',
+    openrouterModel: 'deepseek/deepseek-chat-v3-0324:free',
+    useCustomKey: false,
+  },
+  whatsapp: {
+    enabled: true,
+    phoneNumber: '+14409418002',
+    welcomeMessage: 'Hi! I visited SpotAware.dev and I\'m interested in your services.',
+  },
+  backend: {
+    supabaseUrl: '',
+    supabaseAnonKey: '',
+    stripePublishableKey: '',
+    stripeMode: 'test',
+    useSupabase: false,
+  },
+};
+
+// Settings
+export function getSettings(): SiteSettings {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+    if (data) {
+      const saved = JSON.parse(data);
+      return {
+        email: { ...DEFAULT_SETTINGS.email, ...saved.email },
+        api: { ...DEFAULT_SETTINGS.api, ...saved.api },
+        whatsapp: { ...DEFAULT_SETTINGS.whatsapp, ...saved.whatsapp },
+        backend: { ...DEFAULT_SETTINGS.backend, ...saved.backend },
+      };
+    }
+    return DEFAULT_SETTINGS;
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+export function saveSettings(settings: SiteSettings): void {
+  localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+}
+
+export function updateEmailSettings(emailSettings: Partial<EmailSettings>): void {
+  const settings = getSettings();
+  settings.email = { ...settings.email, ...emailSettings };
+  saveSettings(settings);
+}
+
+export function updateAPISettings(apiSettings: Partial<APISettings>): void {
+  const settings = getSettings();
+  settings.api = { ...settings.api, ...apiSettings };
+  saveSettings(settings);
+}
+
+export function updateWhatsAppSettings(whatsappSettings: Partial<WhatsAppSettings>): void {
+  const settings = getSettings();
+  settings.whatsapp = { ...settings.whatsapp, ...whatsappSettings };
+  saveSettings(settings);
+}
+
+// Leads
+export function saveNewLead(email: string, name?: string, source: 'chat' | 'form' = 'chat'): Lead {
+  const leads = getLeads();
+  
+  // Check if lead already exists
+  const existingLead = leads.find(l => l.email.toLowerCase() === email.toLowerCase());
+  if (existingLead) {
+    return existingLead;
+  }
+  
+  const newLead: Lead = {
+    id: `lead_${Date.now()}`,
+    email,
+    name,
+    timestamp: new Date(),
+    source,
+    status: 'new',
+  };
+  
+  leads.unshift(newLead);
+  localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(leads));
+  return newLead;
+}
+
+export function getLeads(): Lead[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.LEADS);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function updateLeadStatus(leadId: string, status: Lead['status']): void {
+  const leads = getLeads();
+  const lead = leads.find(l => l.id === leadId);
+  if (lead) {
+    lead.status = status;
+    localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(leads));
+  }
+}
+
+export function deleteLead(leadId: string): void {
+  const leads = getLeads().filter(l => l.id !== leadId);
+  localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(leads));
+}
+
+// Chat Sessions
+export function saveChatSession(session: ChatSession): void {
+  const chats = getChatSessions();
+  const existingIndex = chats.findIndex(c => c.id === session.id);
+  
+  if (existingIndex >= 0) {
+    chats[existingIndex] = session;
+  } else {
+    chats.unshift(session);
+  }
+  
+  localStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(chats));
+}
+
+export function getChatSessions(): ChatSession[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.CHATS);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function getChatByLeadId(leadId: string): ChatSession | undefined {
+  return getChatSessions().find(c => c.leadId === leadId);
+}
+
+export function deleteChatSession(sessionId: string): void {
+  const chats = getChatSessions().filter(c => c.id !== sessionId);
+  localStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(chats));
+}
+
+// Project Submissions
+export function saveProjectSubmission(submission: Omit<ProjectSubmission, 'id' | 'timestamp' | 'status'>): ProjectSubmission {
+  const submissions = getProjectSubmissions();
+  
+  const newSubmission: ProjectSubmission = {
+    ...submission,
+    id: `sub_${Date.now()}`,
+    timestamp: new Date(),
+    status: 'new',
+  };
+  
+  submissions.unshift(newSubmission);
+  localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+  
+  // Also save as lead
+  saveNewLead(submission.email, submission.name, 'form');
+  
+  return newSubmission;
+}
+
+export function getProjectSubmissions(): ProjectSubmission[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.SUBMISSIONS);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function updateSubmissionStatus(submissionId: string, status: ProjectSubmission['status']): void {
+  const submissions = getProjectSubmissions();
+  const submission = submissions.find(s => s.id === submissionId);
+  if (submission) {
+    submission.status = status;
+    localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+  }
+}
+
+export function deleteSubmission(submissionId: string): void {
+  const submissions = getProjectSubmissions().filter(s => s.id !== submissionId);
+  localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+}
+
+// Admin Users
+export interface AdminUser {
+  id: string;
+  email: string;
+  password: string;
+  role: 'owner' | 'admin' | 'viewer';
+  createdAt: Date;
+}
+
+const DEFAULT_USERS: AdminUser[] = [
+  { id: 'user_owner', email: 'ayaz@spotaware.dev', password: 'Admin123', role: 'owner', createdAt: new Date() },
+];
+
+export function getAdminUsers(): AdminUser[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.ADMIN_AUTH + '_users');
+    if (data) return JSON.parse(data);
+    // First run — save defaults
+    localStorage.setItem(STORAGE_KEYS.ADMIN_AUTH + '_users', JSON.stringify(DEFAULT_USERS));
+    return DEFAULT_USERS;
+  } catch {
+    return DEFAULT_USERS;
+  }
+}
+
+function saveAdminUsers(users: AdminUser[]): void {
+  localStorage.setItem(STORAGE_KEYS.ADMIN_AUTH + '_users', JSON.stringify(users));
+}
+
+export function verifyAdminLogin(email: string, password: string): AdminUser | null {
+  const users = getAdminUsers();
+  return users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === password) || null;
+}
+
+export function addAdminUser(email: string, password: string, role: 'admin' | 'viewer'): AdminUser | null {
+  const users = getAdminUsers();
+  if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) return null; // duplicate
+  const newUser: AdminUser = { id: `user_${Date.now()}`, email, password, role, createdAt: new Date() };
+  users.push(newUser);
+  saveAdminUsers(users);
+  return newUser;
+}
+
+export function updateAdminUser(userId: string, updates: Partial<Pick<AdminUser, 'email' | 'password' | 'role'>>): boolean {
+  const users = getAdminUsers();
+  const user = users.find(u => u.id === userId);
+  if (!user) return false;
+  if (updates.email) user.email = updates.email;
+  if (updates.password) user.password = updates.password;
+  if (updates.role) user.role = updates.role;
+  saveAdminUsers(users);
+  return true;
+}
+
+export function deleteAdminUser(userId: string): boolean {
+  const users = getAdminUsers();
+  const user = users.find(u => u.id === userId);
+  if (!user || user.role === 'owner') return false; // Can't delete owner
+  saveAdminUsers(users.filter(u => u.id !== userId));
+  return true;
+}
+
+export function setAdminAuth(user: AdminUser | null): void {
+  if (user) {
+    localStorage.setItem(STORAGE_KEYS.ADMIN_AUTH, JSON.stringify({ id: user.id, email: user.email, role: user.role }));
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.ADMIN_AUTH);
+  }
+}
+
+export function getAdminSession(): { id: string; email: string; role: string } | null {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.ADMIN_AUTH);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isAdminAuthenticated(): boolean {
+  return getAdminSession() !== null;
+}
+
+// Stats
+export function getDashboardStats() {
+  const leads = getLeads();
+  const submissions = getProjectSubmissions();
+  const chats = getChatSessions();
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const todayLeads = leads.filter(l => new Date(l.timestamp) >= today).length;
+  const todaySubmissions = submissions.filter(s => new Date(s.timestamp) >= today).length;
+  
+  return {
+    totalLeads: leads.length,
+    todayLeads,
+    newLeads: leads.filter(l => l.status === 'new').length,
+    totalSubmissions: submissions.length,
+    todaySubmissions,
+    newSubmissions: submissions.filter(s => s.status === 'new').length,
+    totalChats: chats.length,
+    totalMessages: chats.reduce((acc, c) => acc + c.messages.length, 0),
+  };
+}
+
+// Clear all data
+export function clearAllData(): void {
+  localStorage.removeItem(STORAGE_KEYS.LEADS);
+  localStorage.removeItem(STORAGE_KEYS.CHATS);
+  localStorage.removeItem(STORAGE_KEYS.SUBMISSIONS);
+}
+
+// Export data as JSON
+export function exportAllData(): string {
+  return JSON.stringify({
+    leads: getLeads(),
+    chats: getChatSessions(),
+    submissions: getProjectSubmissions(),
+    clients: getClients(),
+    orders: getOrders(),
+    invoices: getInvoices(),
+    activities: getActivities(),
+    settings: getSettings(),
+    exportedAt: new Date().toISOString(),
+  }, null, 2);
+}
+
+// ── Activity Log System ──
+export interface Activity {
+  id: string;
+  type: 'lead' | 'submission' | 'chat' | 'order' | 'invoice' | 'payment' | 'client' | 'system';
+  action: string;
+  detail: string;
+  entityId?: string;
+  email?: string;
+  timestamp: Date;
+}
+
+export function getActivities(): Activity[] {
+  try { const d = localStorage.getItem('spotaware_activities'); return d ? JSON.parse(d) : []; } catch { return []; }
+}
+
+export function logActivity(type: Activity['type'], action: string, detail: string, entityId?: string, email?: string): void {
+  const acts = getActivities();
+  acts.unshift({ id: `act_${Date.now()}`, type, action, detail, entityId, email, timestamp: new Date() });
+  if (acts.length > 200) acts.length = 200; // Keep last 200
+  localStorage.setItem('spotaware_activities', JSON.stringify(acts));
+}
+
+// ── Support Tickets ──
+export interface SupportTicket {
+  id: string;
+  clientId: string;
+  orderId?: string;
+  subject: string;
+  messages: TicketMessage[];
+  status: 'open' | 'in_progress' | 'waiting_client' | 'resolved' | 'closed';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TicketMessage {
+  id: string;
+  content: string;
+  by: 'client' | 'admin';
+  timestamp: Date;
+}
+
+export function getTickets(): SupportTicket[] {
+  try { const d = localStorage.getItem('spotaware_tickets'); return d ? JSON.parse(d) : []; } catch { return []; }
+}
+function saveTickets(t: SupportTicket[]) { localStorage.setItem('spotaware_tickets', JSON.stringify(t)); }
+
+export function getClientTickets(clientId: string): SupportTicket[] { return getTickets().filter(t => t.clientId === clientId); }
+
+export function createTicket(clientId: string, subject: string, message: string, orderId?: string, priority: SupportTicket['priority'] = 'medium'): SupportTicket {
+  const tickets = getTickets();
+  const t: SupportTicket = {
+    id: `tkt_${Date.now()}`, clientId, orderId, subject, priority, status: 'open',
+    messages: [{ id: `tm_${Date.now()}`, content: message, by: 'client', timestamp: new Date() }],
+    createdAt: new Date(), updatedAt: new Date(),
+  };
+  tickets.unshift(t); saveTickets(tickets);
+  logActivity('client', 'New Ticket', `${subject}`, t.id);
+  return t;
+}
+
+export function addTicketMessage(ticketId: string, content: string, by: 'client' | 'admin'): void {
+  const tickets = getTickets();
+  const t = tickets.find(x => x.id === ticketId);
+  if (!t) return;
+  t.messages.push({ id: `tm_${Date.now()}`, content, by, timestamp: new Date() });
+  t.updatedAt = new Date();
+  if (by === 'admin' && t.status === 'open') t.status = 'in_progress';
+  saveTickets(tickets);
+}
+
+export function updateTicketStatus(ticketId: string, status: SupportTicket['status']): void {
+  const tickets = getTickets();
+  const t = tickets.find(x => x.id === ticketId);
+  if (t) { t.status = status; t.updatedAt = new Date(); saveTickets(tickets); }
+}
+
+// ── Notifications ──
+export interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'success' | 'error';
+  read: boolean;
+  link?: string;
+  createdAt: Date;
+}
+
+export function getNotifications(forClient?: string): AppNotification[] {
+  try {
+    const key = forClient ? `spotaware_notif_${forClient}` : 'spotaware_notif_admin';
+    const d = localStorage.getItem(key); return d ? JSON.parse(d) : [];
+  } catch { return []; }
+}
+
+export function addNotification(title: string, message: string, type: AppNotification['type'] = 'info', forClient?: string): void {
+  const key = forClient ? `spotaware_notif_${forClient}` : 'spotaware_notif_admin';
+  const notifs = getNotifications(forClient);
+  notifs.unshift({ id: `n_${Date.now()}`, title, message, type, read: false, createdAt: new Date() });
+  if (notifs.length > 50) notifs.length = 50;
+  localStorage.setItem(key, JSON.stringify(notifs));
+}
+
+export function markNotifRead(notifId: string, forClient?: string): void {
+  const key = forClient ? `spotaware_notif_${forClient}` : 'spotaware_notif_admin';
+  const notifs = getNotifications(forClient);
+  const n = notifs.find(x => x.id === notifId);
+  if (n) { n.read = true; localStorage.setItem(key, JSON.stringify(notifs)); }
+}
+
+export function markAllNotifsRead(forClient?: string): void {
+  const key = forClient ? `spotaware_notif_${forClient}` : 'spotaware_notif_admin';
+  const notifs = getNotifications(forClient);
+  notifs.forEach(n => n.read = true);
+  localStorage.setItem(key, JSON.stringify(notifs));
+}
+
+// ── Order Notes / Files ──
+export interface OrderNote {
+  id: string;
+  orderId: string;
+  content: string;
+  by: 'admin' | 'client';
+  pinned: boolean;
+  timestamp: Date;
+}
+
+export function getOrderNotes(orderId: string): OrderNote[] {
+  try { const d = localStorage.getItem(`spotaware_notes_${orderId}`); return d ? JSON.parse(d) : []; } catch { return []; }
+}
+
+export function addOrderNote(orderId: string, content: string, by: 'admin' | 'client', pinned: boolean = false): void {
+  const notes = getOrderNotes(orderId);
+  notes.unshift({ id: `note_${Date.now()}`, orderId, content, by, pinned, timestamp: new Date() });
+  localStorage.setItem(`spotaware_notes_${orderId}`, JSON.stringify(notes));
+}
+
+export function toggleNotePin(orderId: string, noteId: string): void {
+  const notes = getOrderNotes(orderId);
+  const n = notes.find(x => x.id === noteId);
+  if (n) { n.pinned = !n.pinned; localStorage.setItem(`spotaware_notes_${orderId}`, JSON.stringify(notes)); }
+}
+
+// ── Enhanced Dashboard Stats ──
+export function getFullDashboardStats() {
+  const leads = getLeads();
+  const subs = getProjectSubmissions();
+  const chats = getChatSessions();
+  const clients = getClients();
+  const orders = getOrders();
+  const invoices = getInvoices();
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const week = new Date(today); week.setDate(week.getDate() - 7);
+  const month = new Date(today); month.setMonth(month.getMonth() - 1);
+
+  const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
+  const onHoldOrders = orders.filter(o => o.onHold);
+  const paidInvoices = invoices.filter(i => i.status === 'paid');
+  const pendingInvoices = invoices.filter(i => i.status === 'sent' || i.status === 'overdue');
+  const overdueInvoices = invoices.filter(i => i.status === 'overdue');
+  const totalRevenue = paidInvoices.reduce((a, i) => a + i.total, 0);
+  const monthRevenue = paidInvoices.filter(i => new Date(i.paidAt || i.createdAt) >= month).reduce((a, i) => a + i.total, 0);
+  const conversionRate = leads.length > 0 ? Math.round(leads.filter(l => l.status === 'converted').length / leads.length * 100) : 0;
+
+  return {
+    leads: { total: leads.length, new: leads.filter(l => l.status === 'new').length, today: leads.filter(l => new Date(l.timestamp) >= today).length, week: leads.filter(l => new Date(l.timestamp) >= week).length },
+    submissions: { total: subs.length, new: subs.filter(s => s.status === 'new').length, today: subs.filter(s => new Date(s.timestamp) >= today).length },
+    chats: { total: chats.length, messages: chats.reduce((a, c) => a + c.messages.length, 0) },
+    clients: { total: clients.length },
+    orders: { total: orders.length, active: activeOrders.length, onHold: onHoldOrders.length, completed: orders.filter(o => o.status === 'completed').length },
+    invoices: { total: invoices.length, pending: pendingInvoices.length, overdue: overdueInvoices.length, pendingAmount: pendingInvoices.reduce((a, i) => a + i.total, 0) },
+    revenue: { total: totalRevenue, month: monthRevenue },
+    conversionRate,
+  };
+}
