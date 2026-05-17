@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import Logo from './Logo';
 
-export default function Footer({ onAdminClick, onClientClick }: { onAdminClick: () => void; onClientClick: () => void }) {
+export default function Footer() {
   const quickLinks = [
     { label: 'Work', id: 'portfolio' },
     { label: 'Pricing', id: 'pricing' },
@@ -33,8 +33,8 @@ export default function Footer({ onAdminClick, onClientClick }: { onAdminClick: 
           <div className="flex flex-col md:flex-row items-center justify-between gap-2 pt-4 border-t border-gray-soft/20">
             <p className="text-[11px] text-gray-medium">© 2025 SpotAware.dev. All rights reserved.</p>
             <div className="flex items-center gap-4">
-              <button onClick={onClientClick} className="text-[11px] text-cyan-glow/70 hover:text-cyan-glow transition-colors font-medium">Client Portal</button>
-              <button onClick={onAdminClick} className="text-[11px] text-gray-medium/40 hover:text-cyan-glow transition-colors">Admin</button>
+              <a href="/client" className="text-[11px] text-cyan-glow/70 hover:text-cyan-glow transition-colors font-medium">Client Portal</a>
+              <a href="/admin" className="text-[11px] text-gray-medium/40 hover:text-cyan-glow transition-colors">Admin</a>
             </div>
           </div>
         </motion.div>

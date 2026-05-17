@@ -24,7 +24,10 @@ import {
   deleteLeadInSupabase,
   deleteSubmissionInSupabase,
   deleteChatSessionInSupabase,
+  fetchActivityLogsInSupabase,
+  createActivityLogInSupabase,
 } from '../utils/supabaseData';
+import { getSupabase } from '../utils/supabase';
 import { downloadInvoice, emailInvoiceToClient } from '../utils/invoice';
 
 type Tab = 'dashboard' | 'leads' | 'submissions' | 'chats' | 'settings' | 'users' | 'clients' | 'activity' | 'support';
@@ -44,6 +47,28 @@ const MODELS = [
 // Colors
 const bg = 'var(--t-bg,#0f1923)'; const bgCard = 'var(--t-card,#152230)'; const bgElevated = 'var(--t-el,#1a2d3d)'; const bgInput = 'var(--t-in,#1f3344)';
 const border = 'var(--t-bd,#264055)'; const borderLight = 'var(--t-bdl,#1e3548)'; const textSecondary = 'var(--t-sec,#8ab4d0)'; const textMuted = 'var(--t-mut,#4d7a96)';
+
+function buildSupabaseStats(snapshot: { leads: Lead[]; submissions: ProjectSubmission[]; chats: ChatSession[]; clients: ClientUser[]; orders: Order[]; invoices: Invoice[] }) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const monthAgo = new Date(today);
+  monthAgo.setMonth(monthAgo.getMonth() - 1);
+  const paidInvoices = snapshot.invoices.filter(i => i.status === 'paid');
+  const pendingInvoices = snapshot.invoices.filter(i => i.status === 'sent' || i.status === 'overdue');
+  const convertedLeads = snapshot.leads.filter(l => l.status === 'converted').length;
+  const conversionRate = snapshot.leads.length > 0 ? Math.round((convertedLeads / snapshot.leads.length) * 100) : 0;
+
+  return {
+    leads: { total: snapshot.leads.length, new: snapshot.leads.filter(l => l.status === 'new').length, today: snapshot.leads.filter(l => new Date(l.timestamp) >= today).length, week: snapshot.leads.filter(l => new Date(l.timestamp).getTime() >= (today.getTime() - (7 * 86400000))).length },
+    submissions: { total: snapshot.submissions.length, new: snapshot.submissions.filter(s => s.status === 'new').length, today: snapshot.submissions.filter(s => new Date(s.timestamp) >= today).length },
+    chats: { total: snapshot.chats.length, messages: snapshot.chats.reduce((a, c) => a + c.messages.length, 0) },
+    clients: { total: snapshot.clients.length },
+    orders: { total: snapshot.orders.length, active: snapshot.orders.filter(o => !['completed', 'cancelled'].includes(o.status)).length, onHold: snapshot.orders.filter(o => o.onHold).length, completed: snapshot.orders.filter(o => o.status === 'completed').length },
+    invoices: { total: snapshot.invoices.length, pending: pendingInvoices.length, overdue: snapshot.invoices.filter(i => i.status === 'overdue').length, pendingAmount: pendingInvoices.reduce((a, i) => a + i.total, 0) },
+    revenue: { total: paidInvoices.reduce((a, i) => a + i.total, 0), month: paidInvoices.filter(i => new Date(i.paidAt || i.createdAt) >= monthAgo).reduce((a, i) => a + i.total, 0) },
+    conversionRate,
+  };
+}
 
 export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [isAuth, setIsAuth] = useState(false);
@@ -87,6 +112,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   // Activity & enhanced stats
   const [activities, setActivities2] = useState<Activity[]>([]);
   const [fullStats, setFullStats] = useState(getFullDashboardStats());
+  const [liveNotice, setLiveNotice] = useState('');
   const [allTickets, setAllTickets] = useState<SupportTicket[]>([]);
   const [selTicketId, setSelTicketId] = useState<string | null>(null);
   const [adminTicketReply, setAdminTicketReply] = useState('');
@@ -101,6 +127,9 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
         if (session && ['owner', 'admin', 'viewer'].includes(session.role)) {
           setIsAuth(true);
           setCurrentUser({ id: session.id, email: session.email, role: session.role });
+        } else if (session) {
+          await supabaseSignOut();
+          setLoginError('Access denied: admin role required.');
         }
         return;
       }
@@ -122,22 +151,42 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(() => { if (isAuth) void reload(); }, [isAuth, tab]);
 
+  useEffect(() => {
+    if (!isAuth || !isSupabaseAuthEnabled()) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel('admin-live-updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => { setLiveNotice('New lead activity detected'); void reload(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, () => { setLiveNotice('New project brief activity detected'); void reload(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets' }, () => { setLiveNotice('Support ticket updated'); void reload(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => { setLiveNotice('Order update received'); void reload(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => { setLiveNotice('Invoice update received'); void reload(); })
+      .subscribe();
+
+    const clearTimer = setInterval(() => setLiveNotice(''), 6000);
+    return () => {
+      clearInterval(clearTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [isAuth]);
+
   const reload = async () => {
     if (isSupabaseAuthEnabled()) {
       const snap = await fetchAdminSnapshot();
       setLeads(snap.leads);
       setSubmissions(snap.submissions);
       setChats(snap.chats);
+      setUsers(snap.adminUsers);
       setClients2(snap.clients);
       setAllOrders(snap.orders);
       setAllInvoices(snap.invoices);
       setAllTickets(snap.tickets);
-      // Keep existing derived/local widgets available until full analytics moves to Supabase.
       setStats(getDashboardStats());
       setSettings(getSettings());
-      setUsers(getAdminUsers());
-      setActivities2(getActivities());
-      setFullStats(getFullDashboardStats());
+      setActivities2(await fetchActivityLogsInSupabase());
+      setFullStats(buildSupabaseStats(snap));
       return;
     }
 
@@ -195,6 +244,10 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleAddUser = () => {
+    if (isSupabaseAuthEnabled()) {
+      alert('Use Supabase Auth dashboard or backend admin API to create admin users securely.');
+      return;
+    }
     if (!newUserEmail || !newUserPass) return;
     const u = addAdminUser(newUserEmail, newUserPass, newUserRole);
     if (!u) { alert('User with this email already exists'); return; }
@@ -202,6 +255,10 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleUpdatePassword = (userId: string) => {
+    if (isSupabaseAuthEnabled()) {
+      alert('Password changes are managed via Supabase Auth.');
+      return;
+    }
     if (!editPass) return;
     updateAdminUser(userId, { password: editPass });
     setEditPass(''); setEditingUser(null); setUsers(getAdminUsers());
@@ -247,10 +304,9 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             <button onClick={onClose} className="w-full py-2 text-sm transition-colors hover:text-white" style={{ color: textSecondary }}>Cancel</button>
           </div>
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgElevated, borderColor: borderLight }}>
-            <p className="text-[11px] font-medium mb-2" style={{ color: textMuted }}>Demo Login:</p>
-            <button onClick={() => { setLoginEmail('ayaz@spotaware.dev'); setLoginPass('Admin123'); }} className="text-[12px] text-cyan-glow/80 hover:text-cyan-glow transition-colors">
-              📧 ayaz@spotaware.dev / Admin123 — Click to fill
-            </button>
+            <p className="text-[11px]" style={{ color: textMuted }}>
+              Sign in with your authenticated Supabase admin account.
+            </p>
           </div>
         </motion.div>
       </motion.div>
@@ -297,6 +353,11 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        {liveNotice && (
+          <div className="mb-4 rounded-xl border px-4 py-2 text-[12px] bg-cyan-glow/10 text-cyan-glow border-cyan-glow/20">
+            {liveNotice}
+          </div>
+        )}
 
         {/* ── Dashboard — Command Center ── */}
         {tab === 'dashboard' && (
@@ -345,7 +406,21 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                 <p className="text-xs font-semibold text-white mb-3">⚡ Quick Actions</p>
                 <div className="grid grid-cols-2 gap-2">
                   <a href={`https://wa.me/${settings.whatsapp.phoneNumber.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="p-3 rounded-lg bg-green-500/10 border border-green-500/15 text-green-400 text-xs font-medium text-center hover:bg-green-500/15 transition-colors">📱 WhatsApp</a>
-                  <button onClick={() => { const d = exportAllData(); const b = new Blob([d]); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = `spotaware-${new Date().toISOString().split('T')[0]}.json`; a.click(); logActivity('system', 'export', 'Data exported'); reload(); }} className="p-3 rounded-lg border text-xs font-medium text-center hover:bg-white/[0.03] transition-colors" style={{ borderColor: borderLight, color: textSecondary }}>📥 Export Data</button>
+                  <button onClick={() => {
+                    const d = exportAllData();
+                    const b = new Blob([d]);
+                    const u = URL.createObjectURL(b);
+                    const a = document.createElement('a');
+                    a.href = u;
+                    a.download = `spotaware-${new Date().toISOString().split('T')[0]}.json`;
+                    a.click();
+                    if (isSupabaseAuthEnabled()) {
+                      void createActivityLogInSupabase({ actionType: 'system', actionLabel: 'Export', detail: 'Data exported from admin panel', actorId: currentUser?.id, actorEmail: currentUser?.email });
+                    } else {
+                      logActivity('system', 'export', 'Data exported');
+                    }
+                    void reload();
+                  }} className="p-3 rounded-lg border text-xs font-medium text-center hover:bg-white/[0.03] transition-colors" style={{ borderColor: borderLight, color: textSecondary }}>📥 Export Data</button>
                   <button onClick={() => setTab('settings')} className="p-3 rounded-lg border text-xs font-medium text-center hover:bg-white/[0.03] transition-colors" style={{ borderColor: borderLight, color: textSecondary }}>⚙️ Settings</button>
                   <button onClick={() => {
                     const h = checkOverdueInstallments(); const d = checkOverdueDeadlines();
@@ -396,7 +471,17 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             <div className="rounded-xl p-4 border border-red-500/20 bg-red-500/5">
               <div className="flex items-center justify-between">
                 <div><p className="text-xs font-semibold text-red-400">⚠ Danger Zone</p><p className="text-[10px] text-red-400/60">Permanent actions</p></div>
-                <button onClick={() => { if (confirm('Delete ALL data? This cannot be undone.')) { clearAllData(); logActivity('system', 'clear', 'All data cleared'); reload(); } }} className="px-3 py-1.5 rounded-lg text-[11px] font-medium text-white bg-red-500/80 hover:bg-red-500">Clear All Data</button>
+                <button onClick={() => {
+                  if (confirm('Delete ALL data? This cannot be undone.')) {
+                    clearAllData();
+                    if (isSupabaseAuthEnabled()) {
+                      void createActivityLogInSupabase({ actionType: 'system', actionLabel: 'Clear Data', detail: 'Local cache cleared', actorId: currentUser?.id, actorEmail: currentUser?.email });
+                    } else {
+                      logActivity('system', 'clear', 'All data cleared');
+                    }
+                    void reload();
+                  }
+                }} className="px-3 py-1.5 rounded-lg text-[11px] font-medium text-white bg-red-500/80 hover:bg-red-500">Clear All Data</button>
               </div>
             </div>
           </div>
@@ -743,10 +828,10 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button onClick={() => { setEditingUser(editingUser === u.id ? null : u.id); setEditPass(''); }} className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:text-white" style={{ borderColor: border, color: textSecondary }}>
+                        <button onClick={() => { if (isSupabaseAuthEnabled()) return; setEditingUser(editingUser === u.id ? null : u.id); setEditPass(''); }} disabled={isSupabaseAuthEnabled()} className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:text-white disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: border, color: textSecondary }}>
                           {editingUser === u.id ? 'Cancel' : 'Edit'}
                         </button>
-                        {u.role !== 'owner' && (
+                        {u.role !== 'owner' && !isSupabaseAuthEnabled() && (
                           <button onClick={() => { if (confirm(`Delete ${u.email}?`)) { deleteAdminUser(u.id); setUsers(getAdminUsers()); } }} className="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 hover:bg-red-500/10">Delete</button>
                         )}
                       </div>
@@ -775,6 +860,11 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             <div className="rounded-xl border overflow-hidden" style={{ background: bgCard, borderColor: border }}>
               <div className="px-5 py-4 border-b" style={{ borderColor: borderLight }}><h3 className="font-semibold text-white">Add New User</h3></div>
               <div className="p-5 space-y-4">
+                {isSupabaseAuthEnabled() && (
+                  <div className="rounded-lg border p-3 text-[12px]" style={{ borderColor: borderLight, color: textMuted, background: bgElevated }}>
+                    User creation and role management are handled through Supabase Auth / backend admin APIs.
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><label className="text-xs font-medium mb-1.5 block" style={{ color: textSecondary }}>Email</label><input value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} placeholder="user@email.com" className="w-full px-4 py-2.5 rounded-lg text-[13px] text-white focus:outline-none" style={{ background: bgInput, border: `1px solid ${border}` }} /></div>
                   <div><label className="text-xs font-medium mb-1.5 block" style={{ color: textSecondary }}>Password</label><input type="password" value={newUserPass} onChange={e => setNewUserPass(e.target.value)} placeholder="••••••" className="w-full px-4 py-2.5 rounded-lg text-[13px] text-white focus:outline-none" style={{ background: bgInput, border: `1px solid ${border}` }} /></div>
@@ -783,7 +873,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                   <select value={newUserRole} onChange={e => setNewUserRole(e.target.value as 'admin' | 'viewer')} className="px-4 py-2.5 rounded-lg text-[13px] text-white focus:outline-none" style={{ background: bgInput, border: `1px solid ${border}` }}>
                     <option value="admin">🛡 Admin — Full access</option><option value="viewer">👁 Viewer — Read only</option>
                   </select></div>
-                <button onClick={handleAddUser} disabled={!newUserEmail || !newUserPass} className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-cyan-glow text-midnight hover:bg-cyan-soft disabled:opacity-40 transition-colors">Add User</button>
+                <button onClick={handleAddUser} disabled={!newUserEmail || !newUserPass || isSupabaseAuthEnabled()} className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-cyan-glow text-midnight hover:bg-cyan-soft disabled:opacity-40 transition-colors">Add User</button>
               </div>
             </div>
           </div>
@@ -1056,7 +1146,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <select value={t.status} onChange={e => { e.stopPropagation(); const nextStatus = e.target.value as SupportTicket['status']; if (isSupabaseAuthEnabled()) { void updateSupportTicketStatusInSupabase(t.id, nextStatus).then(() => reload()); } else { updateTicketStatus(t.id, nextStatus); void reload(); } if (nextStatus === 'resolved') { addNotification('Ticket Resolved', `Your ticket "${t.subject}" has been resolved.`, 'success', t.clientId); } }}
+                      <select value={t.status} onChange={e => { e.stopPropagation(); const nextStatus = e.target.value as SupportTicket['status']; if (isSupabaseAuthEnabled()) { void updateSupportTicketStatusInSupabase(t.id, nextStatus).then(async () => { await createActivityLogInSupabase({ actionType: 'system', actionLabel: 'Support Status', detail: `Ticket ${t.subject} -> ${nextStatus}`, entityId: t.id, actorId: currentUser?.id, actorEmail: currentUser?.email }); reload(); }); } else { updateTicketStatus(t.id, nextStatus); void reload(); } if (nextStatus === 'resolved') { addNotification('Ticket Resolved', `Your ticket "${t.subject}" has been resolved.`, 'success', t.clientId); } }}
                         className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer ${sColors[t.status]}`} style={{ background: 'transparent' }}>
                         <option value="open">Open</option><option value="in_progress">In Progress</option><option value="waiting_client">Waiting Client</option><option value="resolved">Resolved</option><option value="closed">Closed</option>
                       </select>
@@ -1081,6 +1171,14 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                           if (!adminTicketReply.trim()) return;
                           if (isSupabaseAuthEnabled()) {
                             void addSupportMessageInSupabase(t.id, t.clientId, adminTicketReply, 'admin').then(() => {
+                              void createActivityLogInSupabase({
+                                actionType: 'chat',
+                                actionLabel: 'Support Reply',
+                                detail: `Admin replied on ticket: ${t.subject}`,
+                                entityId: t.id,
+                                actorId: currentUser?.id,
+                                actorEmail: currentUser?.email,
+                              });
                               addNotification('Support Reply', `New reply on your ticket: "${t.subject}"`, 'info', t.clientId);
                               setAdminTicketReply('');
                               reload();

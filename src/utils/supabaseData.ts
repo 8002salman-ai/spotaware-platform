@@ -14,6 +14,8 @@ import type {
   SupportTicket,
   TicketMessage,
   AppNotification,
+  Activity,
+  AdminUser,
 } from './storage';
 
 type DbOrderRow = {
@@ -216,13 +218,14 @@ export async function fetchAdminSnapshot(): Promise<{
   leads: Lead[];
   submissions: ProjectSubmission[];
   chats: ChatSession[];
+  adminUsers: AdminUser[];
   clients: ClientUser[];
   orders: Order[];
   invoices: Invoice[];
   tickets: SupportTicket[];
 }> {
   const supabase = getSupabase();
-  if (!supabase) return { leads: [], submissions: [], chats: [], clients: [], orders: [], invoices: [], tickets: [] };
+  if (!supabase) return { leads: [], submissions: [], chats: [], adminUsers: [], clients: [], orders: [], invoices: [], tickets: [] };
 
   const [leadsRes, subsRes, chatsRes, chatMsgsRes, clientsRes, ordersRes, invoicesRes, ticketsRes, ticketMsgsRes] = await Promise.all([
     supabase.from('leads').select('*').order('created_at', { ascending: false }),
@@ -290,6 +293,19 @@ export async function fetchAdminSnapshot(): Promise<{
     phone: c.phone || undefined,
     createdAt: new Date(c.created_at),
   }));
+  const adminProfilesRes = await supabase
+    .from('profiles')
+    .select('*')
+    .in('role', ['owner', 'admin', 'viewer'])
+    .order('created_at', { ascending: true });
+
+  const adminUsersMapped: AdminUser[] = (adminProfilesRes.data || []).map((u) => ({
+    id: u.id,
+    email: u.email,
+    password: '',
+    role: u.role,
+    createdAt: new Date(u.created_at),
+  }));
 
   const orders: Order[] = ((ordersRes.data as DbOrderRow[] | null) || []).map(mapOrder);
   const invoices: Invoice[] = (invoicesRes.data || []).map((r) => mapInvoice(r as never));
@@ -316,7 +332,7 @@ export async function fetchAdminSnapshot(): Promise<{
     updatedAt: new Date(t.updated_at),
   }));
 
-  return { leads, submissions, chats, clients, orders, invoices, tickets };
+  return { leads, submissions, chats, adminUsers: adminUsersMapped, clients, orders, invoices, tickets };
 }
 
 export async function updateLeadStatusInSupabase(leadId: string, status: Lead['status']): Promise<void> {
@@ -518,4 +534,44 @@ export async function markAllNotificationsReadInSupabase(clientId: string): Prom
   const supabase = getSupabase();
   if (!supabase) return;
   await supabase.from('notifications').update({ read: true }).eq('client_id', clientId).eq('read', false);
+}
+
+export async function fetchActivityLogsInSupabase(limit: number = 200): Promise<Activity[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data } = await supabase
+    .from('activity_logs')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  return (data || []).map((a) => ({
+    id: a.id,
+    type: (a.action_type as Activity['type']) || 'system',
+    action: a.action_label,
+    detail: a.detail,
+    entityId: a.entity_id || undefined,
+    email: a.actor_email || undefined,
+    timestamp: new Date(a.created_at),
+  }));
+}
+
+export async function createActivityLogInSupabase(input: {
+  actionType: Activity['type'];
+  actionLabel: string;
+  detail: string;
+  entityId?: string;
+  actorEmail?: string;
+  actorId?: string;
+}): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  await supabase.from('activity_logs').insert({
+    actor_id: input.actorId || null,
+    actor_email: input.actorEmail || null,
+    action_type: input.actionType,
+    action_label: input.actionLabel,
+    detail: input.detail,
+    entity_id: input.entityId || null,
+  });
 }

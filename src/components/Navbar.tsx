@@ -13,7 +13,7 @@ export default function Navbar() {
   }, []);
 
   const scrollTo = (id: string) => { setMenuOpen(false); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); };
-  const openClientPortal = () => { setMenuOpen(false); window.dispatchEvent(new CustomEvent('open-client-portal')); };
+  const openClientPortal = () => { setMenuOpen(false); window.location.href = '/client'; };
 
   const navLinks = [
     { label: 'Services', id: 'services' },

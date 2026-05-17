@@ -1,4 +1,3 @@
-import { getSettings } from './storage';
 import { getSupabase, isSupabaseConfigured } from './supabase';
 
 export interface PortalSession {
@@ -24,8 +23,7 @@ function normalizeRole(role: string | null | undefined): PortalSession['role'] {
 }
 
 export function isSupabaseAuthEnabled(): boolean {
-  const settings = getSettings();
-  return settings.backend.useSupabase && isSupabaseConfigured();
+  return isSupabaseConfigured();
 }
 
 export async function getSupabasePortalSession(): Promise<PortalSession | null> {

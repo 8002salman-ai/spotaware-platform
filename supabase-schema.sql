@@ -305,7 +305,7 @@ CREATE POLICY "Admins manage notifications" ON public.notifications FOR ALL USIN
 
 -- ACTIVITY LOGS (admin-only)
 CREATE POLICY "Admins view activity logs" ON public.activity_logs FOR SELECT USING (public.is_admin());
-CREATE POLICY "Admins insert activity logs" ON public.activity_logs FOR INSERT WITH CHECK (public.is_admin());
+CREATE POLICY "Authenticated insert activity logs" ON public.activity_logs FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
 -- ═══════════════════════════════════════════════════════════════
 -- INDEXES

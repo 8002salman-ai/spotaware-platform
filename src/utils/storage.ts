@@ -183,45 +183,7 @@ export function getClients(): ClientUser[] {
   try {
     const d = localStorage.getItem(STORAGE_KEYS.CLIENTS);
     if (d) return JSON.parse(d);
-    // Seed demo client
-    const demo: ClientUser[] = [
-      { id: 'client_demo', name: 'John Demo', email: 'demo@client.com', password: 'demo123', company: 'Demo Corp', createdAt: new Date() },
-    ];
-    localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(demo));
-    // Seed demo orders
-    const demoOrders: Order[] = [
-      { id: 'ord_demo1', clientId: 'client_demo', service: 'Business Website', package: 'Up to 10 pages, CMS, SEO', price: 1497, status: 'in_progress', progress: 45, notes: 'Need modern design for our consulting firm', adminNotes: '',
-        paymentPlan: 'installment',
-        installments: [
-          { id: 'inst_1', amount: 374.25, dueDate: '2025-01-15', status: 'paid', paidAt: new Date(Date.now() - 10 * 86400000), label: 'Installment 1 of 4' },
-          { id: 'inst_2', amount: 374.25, dueDate: '2025-02-01', status: 'paid', paidAt: new Date(Date.now() - 3 * 86400000), label: 'Installment 2 of 4' },
-          { id: 'inst_3', amount: 374.25, dueDate: '2025-02-15', status: 'pending', label: 'Installment 3 of 4' },
-          { id: 'inst_4', amount: 374.25, dueDate: '2025-03-01', status: 'pending', label: 'Installment 4 of 4' },
-        ],
-        totalPaid: 748.5, onHold: false,
-        clientDeadlines: [
-          { id: 'dl_1', item: 'Company logo files (AI/SVG)', dueDate: '2025-01-20', status: 'received', receivedAt: new Date(Date.now() - 8 * 86400000) },
-          { id: 'dl_2', item: 'Homepage content & images', dueDate: '2025-02-05', status: 'pending' },
-        ],
-        updates: [
-        { id: 'upd_1', message: 'Project started! We will share wireframes in 2 days.', by: 'admin', timestamp: new Date(Date.now() - 3 * 86400000) },
-        { id: 'upd_2', message: 'Sounds great, looking forward to it!', by: 'client', timestamp: new Date(Date.now() - 2 * 86400000) },
-        { id: 'upd_3', message: 'Wireframes ready for review. Please check and share feedback.', by: 'admin', timestamp: new Date(Date.now() - 86400000) },
-      ], createdAt: new Date(Date.now() - 5 * 86400000), dueDate: '2025-02-15' },
-      { id: 'ord_demo2', clientId: 'client_demo', service: 'Logo & Brand Kit', package: 'Logo, colors, typography, guidelines', price: 297, status: 'completed', progress: 100, notes: '', adminNotes: '',
-        paymentPlan: 'full', installments: [], totalPaid: 297, onHold: false, clientDeadlines: [],
-        updates: [
-        { id: 'upd_4', message: 'Brand kit delivered! Files shared via email.', by: 'admin', timestamp: new Date(Date.now() - 10 * 86400000) },
-      ], createdAt: new Date(Date.now() - 15 * 86400000) },
-    ];
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(demoOrders));
-    // Seed demo invoices
-    const demoInvoices: Invoice[] = [
-      { id: 'inv_demo1', invoiceNumber: 'INV-1001', clientId: 'client_demo', orderId: 'ord_demo2', packageName: 'Logo & Brand Kit', items: [{ description: 'Logo & Brand Kit — Complete Package', quantity: 1, rate: 297, amount: 297, type: 'package' as const }], subtotal: 297, taxRate: 8.25, taxAmount: 24.49, total: 321.49, status: 'paid', createdAt: new Date(Date.now() - 14 * 86400000), dueDate: '2025-01-20', paidAt: new Date(Date.now() - 12 * 86400000) },
-      { id: 'inv_demo2', invoiceNumber: 'INV-1002', clientId: 'client_demo', orderId: 'ord_demo1', packageName: 'Business Website', items: [{ description: 'Business Website — 50% Upfront Deposit', quantity: 1, rate: 748.5, amount: 748.5, type: 'package' as const }, { description: 'SEO Optimization Add-on', quantity: 1, rate: 497, amount: 497, type: 'addon' as const }], subtotal: 1245.5, taxRate: 8.25, taxAmount: 102.75, total: 1348.25, status: 'sent', note: '50% upfront. Remaining $748.50 due on project completion.\nPost-delivery: 30 days free bug-fix support included.', createdAt: new Date(Date.now() - 4 * 86400000), dueDate: '2025-02-01' },
-    ];
-    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(demoInvoices));
-    return demo;
+    return [];
   } catch { return []; }
 }
 function saveClients(c: ClientUser[]) { localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(c)); }
@@ -685,19 +647,15 @@ export interface AdminUser {
   createdAt: Date;
 }
 
-const DEFAULT_USERS: AdminUser[] = [
-  { id: 'user_owner', email: 'ayaz@spotaware.dev', password: 'Admin123', role: 'owner', createdAt: new Date() },
-];
+const DEFAULT_USERS: AdminUser[] = [];
 
 export function getAdminUsers(): AdminUser[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.ADMIN_AUTH + '_users');
     if (data) return JSON.parse(data);
-    // First run — save defaults
-    localStorage.setItem(STORAGE_KEYS.ADMIN_AUTH + '_users', JSON.stringify(DEFAULT_USERS));
-    return DEFAULT_USERS;
+    return [];
   } catch {
-    return DEFAULT_USERS;
+    return [];
   }
 }
 

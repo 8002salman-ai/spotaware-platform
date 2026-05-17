@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import TrustStrip from './components/TrustStrip';
@@ -14,20 +14,10 @@ import Footer from './components/Footer';
 import StickyBar from './components/StickyBar';
 import PortalReveal from './components/PortalReveal';
 import ChatAgent from './components/ChatAgent';
-import AdminPanel from './components/AdminPanel';
-import ClientPortal from './components/ClientPortal';
 import ThemeSwitcher from './components/ThemeSwitcher';
 
 export default function App() {
   const [portalOpen, setPortalOpen] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
-  const [clientOpen, setClientOpen] = useState(false);
-
-  useEffect(() => {
-    const handler = () => setClientOpen(true);
-    window.addEventListener('open-client-portal', handler);
-    return () => window.removeEventListener('open-client-portal', handler);
-  }, []);
 
   const handlePortalOpen = useCallback(() => setPortalOpen(true), []);
   const handlePortalComplete = useCallback(() => {
@@ -38,8 +28,6 @@ export default function App() {
   return (
     <div className="relative min-h-screen bg-surface overflow-x-hidden">
       <PortalReveal isOpen={portalOpen} onComplete={handlePortalComplete} />
-      <AnimatePresence>{adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}</AnimatePresence>
-      <AnimatePresence>{clientOpen && <ClientPortal onClose={() => setClientOpen(false)} />}</AnimatePresence>
       <ThemeSwitcher />
       <Navbar />
       <main>
@@ -56,7 +44,7 @@ export default function App() {
         <Portfolio />
         <FinalCTA />
       </main>
-      <Footer onAdminClick={() => setAdminOpen(true)} onClientClick={() => setClientOpen(true)} />
+      <Footer />
       <StickyBar />
       <ChatAgent />
       {/* Ambient gradient orbs — Skywork-style colored glows */}

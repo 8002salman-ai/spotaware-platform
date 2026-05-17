@@ -21,7 +21,9 @@ import {
   createSupportTicketInSupabase,
   addSupportMessageInSupabase,
   markAllNotificationsReadInSupabase,
+  createActivityLogInSupabase,
 } from '../utils/supabaseData';
+import { getSupabase } from '../utils/supabase';
 
 const bg = 'var(--t-bg,#0f1923)'; const bgCard = 'var(--t-card,#152230)'; const bgEl = 'var(--t-el,#1a2d3d)'; const bgIn = 'var(--t-in,#1f3344)';
 const bd = 'var(--t-bd,#264055)'; const bdL = 'var(--t-bdl,#1e3548)'; const tSec = 'var(--t-sec,#8ab4d0)'; const tMut = 'var(--t-mut,#4d7a96)';
@@ -97,6 +99,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   // Notes
   const [notes, setNotes] = useState<OrderNote[]>([]);
   const [newNote, setNewNote] = useState('');
+  const [liveNotice, setLiveNotice] = useState('');
 
   const loadPortalData = useCallback(async (clientId: string) => {
     if (isSupabaseAuthEnabled()) {
@@ -124,6 +127,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
         const s = await getSupabasePortalSession();
         if (!s) return;
         if (s.role !== 'client') {
+          await supabaseSignOut();
           setError('This account is not a client account.');
           return;
         }
@@ -149,6 +153,34 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (selOrder) { setNotes(getOrderNotes(selOrder.id)); }
   }, [selOrder]);
+
+  useEffect(() => {
+    if (!session || !isSupabaseAuthEnabled()) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel(`client-live-${session.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `client_id=eq.${session.id}` }, () => {
+        setLiveNotice('New notification received');
+        void loadPortalData(session.id);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_messages', filter: `client_id=eq.${session.id}` }, () => {
+        setLiveNotice('Support reply received');
+        void loadPortalData(session.id);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `client_id=eq.${session.id}` }, () => {
+        setLiveNotice('Project status updated');
+        void loadPortalData(session.id);
+      })
+      .subscribe();
+
+    const timer = setInterval(() => setLiveNotice(''), 5000);
+    return () => {
+      clearInterval(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [session, loadPortalData]);
 
   const handleLogin = async () => {
     if (isSupabaseAuthEnabled()) {
@@ -226,6 +258,13 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
         price: svc.price,
         notes: orderNotes,
       });
+      await createActivityLogInSupabase({
+        actionType: 'order',
+        actionLabel: 'Client Order',
+        detail: `${svc.name} ordered from client portal`,
+        actorId: session.id,
+        actorEmail: session.email,
+      });
     } else {
       createOrder({ clientId: session.id, service: svc.name, package: svc.desc, price: svc.price, status: 'pending', notes: orderNotes, adminNotes: '' });
     }
@@ -252,6 +291,14 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     if (!updateMsg.trim() || !selOrder) return;
     if (isSupabaseAuthEnabled()) {
       await addOrderUpdateInSupabase(selOrder.id, updateMsg, 'client');
+      await createActivityLogInSupabase({
+        actionType: 'order',
+        actionLabel: 'Client Message',
+        detail: `Client sent update on order ${selOrder.id}`,
+        actorId: session?.id,
+        actorEmail: session?.email,
+        entityId: selOrder.id,
+      });
     } else {
       addOrderUpdate(selOrder.id, updateMsg, 'client');
     }
@@ -312,10 +359,9 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
             <button onClick={onClose} className="w-full py-2 text-sm hover:text-white transition-colors" style={{ color: tSec }}>Back to site</button>
           </div>
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgEl, borderColor: '#1e2035' }}>
-            <p className="text-[11px] font-medium mb-2" style={{ color: tMut }}>Demo Account:</p>
-            <button onClick={() => { setForm({ name: '', email: 'demo@client.com', password: 'demo123', company: '' }); setMode('login'); }} className="text-[12px] text-cyan-glow/80 hover:text-cyan-glow transition-colors">
-              📧 demo@client.com / demo123 — Click to fill
-            </button>
+            <p className="text-[11px]" style={{ color: tMut }}>
+              Create a real client account or sign in using your existing Supabase credentials.
+            </p>
           </div>
         </motion.div>
       </motion.div>
@@ -347,6 +393,11 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        {liveNotice && (
+          <div className="mb-4 rounded-xl border px-4 py-2 text-[12px] bg-cyan-glow/10 text-cyan-glow border-cyan-glow/20">
+            {liveNotice}
+          </div>
+        )}
         {/* Dashboard — Premium */}
         {view === 'dashboard' && (() => {
           const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
