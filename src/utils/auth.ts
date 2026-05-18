@@ -59,6 +59,22 @@ function emitAuthDebug(message: string): void {
   authDebugListeners.forEach((listener) => listener(snapshot));
 }
 
+async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, timeoutMessage: string): Promise<T | null> {
+  let timer: number | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = window.setTimeout(() => {
+      emitAuthDebug(timeoutMessage);
+      resolve(null);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([Promise.resolve(promise), timeout]);
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
 export function logAuthDebug(message: string): void {
   emitAuthDebug(message);
 }
@@ -180,18 +196,24 @@ export function isSupabaseAuthEnabled(): boolean {
 export async function hydrateSupabasePortalSession(authSession: SupabaseAuthSession): Promise<PortalSession | null> {
   const supabase = getSupabase();
   if (!supabase) return null;
+  emitAuthDebug('Hydration started');
   emitAuthDebug('Session loaded');
   await ensureProfileViaApi(authSession.access_token);
 
   const user = authSession.user;
   let profile: { id: string; email: string | null; name: string | null; role: string | null } | null = null;
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     emitAuthDebug('Profile fetch started');
-    const { data: profileRow } = await supabase
-      .from('profiles')
-      .select('id,email,name,role')
-      .eq('id', user.id)
-      .maybeSingle();
+    const profileResult = await withTimeout(
+      supabase
+        .from('profiles')
+        .select('id,email,name,role')
+        .eq('id', user.id)
+        .maybeSingle(),
+      2500,
+      'Profile fetch timed out',
+    );
+    const profileRow = profileResult?.data;
     if (profileRow) {
       profile = profileRow;
       break;

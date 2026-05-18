@@ -195,12 +195,20 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
       }
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
 
+      logAuthDebug(`Hydration event accepted: ${event}`);
       setAuthHydrating(true);
-      const session = authSession
-        ? await hydrateSupabasePortalSession(authSession)
-        : await waitForSupabasePortalSession();
+      const hydration = authSession
+        ? hydrateSupabasePortalSession(authSession)
+        : waitForSupabasePortalSession();
+      const session = await Promise.race([
+        hydration,
+        new Promise<null>((resolve) => window.setTimeout(() => {
+          logAuthDebug('Hydration timed out');
+          resolve(null);
+        }, 9000)),
+      ]);
       if (!session) {
-        setLoginError('Signed in, but profile could not load. Please refresh once or try again.');
+        setLoginError('Signed in, but profile/session hydration timed out. Please refresh once or try again.');
         setOauthLoading(false);
         setAuthHydrating(false);
         return;
