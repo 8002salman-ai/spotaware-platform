@@ -22,6 +22,25 @@ function normalizeRole(role: string | null | undefined): PortalSession['role'] {
   return 'client';
 }
 
+async function exchangeOAuthCodeFromUrl(): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase || typeof window === 'undefined') return;
+
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get('code');
+  if (!code) return;
+
+  try {
+    await supabase.auth.exchangeCodeForSession(code);
+  } catch {
+    // Supabase may already have consumed the code via detectSessionInUrl.
+  } finally {
+    url.searchParams.delete('code');
+    url.searchParams.delete('state');
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
 export function isSupabaseAuthEnabled(): boolean {
   return isSupabaseConfigured();
 }
@@ -29,6 +48,7 @@ export function isSupabaseAuthEnabled(): boolean {
 export async function getSupabasePortalSession(): Promise<PortalSession | null> {
   const supabase = getSupabase();
   if (!supabase) return null;
+  await exchangeOAuthCodeFromUrl();
 
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session?.user) return null;
@@ -46,6 +66,15 @@ export async function getSupabasePortalSession(): Promise<PortalSession | null> 
     name: profile?.name || (user.user_metadata?.name as string | undefined) || user.email?.split('@')[0] || 'User',
     role: normalizeRole(profile?.role),
   };
+}
+
+export async function waitForSupabasePortalSession(retries = 12, delayMs = 300): Promise<PortalSession | null> {
+  for (let i = 0; i < retries; i++) {
+    const session = await getSupabasePortalSession();
+    if (session) return session;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return null;
 }
 
 export async function supabaseSignIn(email: string, password: string): Promise<{ session: PortalSession | null; error?: string }> {
@@ -95,7 +124,12 @@ export async function supabaseSignInWithGoogle(target: 'admin' | 'client'): Prom
   const redirectTo = `${window.location.origin}/${target}`;
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo },
+    options: {
+      redirectTo,
+      queryParams: {
+        prompt: 'select_account',
+      },
+    },
   });
 
   if (error) return { error: error.message };

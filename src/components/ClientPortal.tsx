@@ -10,7 +10,7 @@ import {
   type Order, type Invoice, type SupportTicket, type AppNotification, type OrderNote,
 } from '../utils/storage';
 import { downloadInvoice } from '../utils/invoice';
-import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { isSupabaseAuthEnabled, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchClientOrders,
   fetchClientInvoices,
@@ -126,7 +126,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const initAuth = async () => {
       if (isSupabaseAuthEnabled()) {
-        const s = await getSupabasePortalSession();
+        const s = await waitForSupabasePortalSession();
         if (!s) return;
         if (!canAccessClientPortal(s.role)) {
           await supabaseSignOut();

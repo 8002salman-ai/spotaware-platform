@@ -14,7 +14,7 @@ import {
   getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
   addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
 } from '../utils/storage';
-import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { isSupabaseAuthEnabled, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchAdminSnapshot,
   updateLeadStatusInSupabase,
@@ -129,7 +129,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const initAuth = async () => {
       if (isSupabaseAuthEnabled()) {
-        const session = await getSupabasePortalSession();
+        const session = await waitForSupabasePortalSession();
         if (session && ['owner', 'admin', 'viewer'].includes(session.role)) {
           setIsAuth(true);
           setCurrentUser({ id: session.id, email: session.email, role: session.role });
