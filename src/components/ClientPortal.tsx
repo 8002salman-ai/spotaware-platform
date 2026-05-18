@@ -21,7 +21,7 @@ import {
   createSupportTicketInSupabase,
   addSupportMessageInSupabase,
   markAllNotificationsReadInSupabase,
-  createActivityLogInSupabase,
+  notifyAdminInSupabase,
 } from '../utils/supabaseData';
 import { getSupabase } from '../utils/supabase';
 
@@ -274,19 +274,18 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     const svc = SERVICES.flatMap(c => c.items).find(i => i.name === orderService);
     if (!svc) return;
     if (isSupabaseAuthEnabled()) {
-      await createClientOrderInSupabase({
+      const order = await createClientOrderInSupabase({
         clientId: session.id,
         service: svc.name,
         package: svc.desc,
         price: svc.price,
         notes: orderNotes,
       });
-      await createActivityLogInSupabase({
-        actionType: 'order',
-        actionLabel: 'Client Order',
-        detail: `${svc.name} ordered from client portal`,
-        actorId: session.id,
-        actorEmail: session.email,
+      await notifyAdminInSupabase({
+        type: 'order',
+        title: 'New Client Order',
+        message: `${session.name} (${session.email}) ordered ${svc.name} for $${svc.price}. Notes: ${orderNotes || 'None'}`,
+        entityId: order?.id,
       });
     } else {
       createOrder({ clientId: session.id, service: svc.name, package: svc.desc, price: svc.price, status: 'pending', notes: orderNotes, adminNotes: '' });
@@ -314,12 +313,10 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     if (!updateMsg.trim() || !selOrder) return;
     if (isSupabaseAuthEnabled()) {
       await addOrderUpdateInSupabase(selOrder.id, updateMsg, 'client');
-      await createActivityLogInSupabase({
-        actionType: 'order',
-        actionLabel: 'Client Message',
-        detail: `Client sent update on order ${selOrder.id}`,
-        actorId: session?.id,
-        actorEmail: session?.email,
+      await notifyAdminInSupabase({
+        type: 'order',
+        title: 'Client Project Message',
+        message: `${session?.name} (${session?.email}) sent a message on ${selOrder.service}: ${updateMsg}`,
         entityId: selOrder.id,
       });
     } else {
@@ -770,7 +767,14 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
                       clientId: session.id,
                       subject: ticketSubject,
                       content: ticketMsg,
-                    }).then(() => loadPortalData(session.id));
+                    }).then(async () => {
+                      await notifyAdminInSupabase({
+                        type: 'client',
+                        title: 'New Support Ticket',
+                        message: `${session.name} (${session.email}) opened support ticket: ${ticketSubject}. ${ticketMsg}`,
+                      });
+                      await loadPortalData(session.id);
+                    });
                   } else {
                     createTicket(session.id, ticketSubject, ticketMsg);
                   }
@@ -816,6 +820,12 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
                             if (!ticketReply.trim()) return;
                             if (isSupabaseAuthEnabled()) {
                               void addSupportMessageInSupabase(t.id, session!.id, ticketReply, 'client').then(async () => {
+                                await notifyAdminInSupabase({
+                                  type: 'chat',
+                                  title: 'Client Support Reply',
+                                  message: `${session!.name} (${session!.email}) replied on ticket "${t.subject}": ${ticketReply}`,
+                                  entityId: t.id,
+                                });
                                 setTicketReply('');
                                 await loadPortalData(session!.id);
                                 const refreshed = await fetchClientSupport(session!.id);

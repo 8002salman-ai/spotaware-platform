@@ -182,19 +182,91 @@ export async function createClientOrderInSupabase(input: {
   package: string;
   price: number;
   notes: string;
-}): Promise<void> {
+}): Promise<Order | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('orders')
+    .insert({
+      client_id: input.clientId,
+      service: input.service,
+      package: input.package,
+      price: input.price,
+      notes: input.notes,
+      status: 'pending',
+      progress: 0,
+      payment_plan: 'full',
+    })
+    .select('*, installments(*), client_deadlines(*), order_updates(*)')
+    .single();
+  if (error || !data) return null;
+  return mapOrder(data as DbOrderRow);
+}
+
+export async function createAdminOrderInSupabase(input: {
+  clientId: string;
+  service: string;
+  package: string;
+  price: number;
+  notes: string;
+  installmentCount?: number;
+}): Promise<Order | null> {
+  const order = await createClientOrderInSupabase(input);
+  if (!order) return null;
+  if (input.installmentCount && input.installmentCount > 1) {
+    await setupOrderInstallmentsInSupabase(order.id, input.price, input.installmentCount);
+  }
+  return order;
+}
+
+export async function updateOrderInSupabase(orderId: string, updates: Partial<Pick<Order, 'status' | 'progress' | 'onHold' | 'holdReason' | 'holdMessage' | 'paymentPlan' | 'totalPaid'>>): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
-  await supabase.from('orders').insert({
-    client_id: input.clientId,
-    service: input.service,
-    package: input.package,
-    price: input.price,
-    notes: input.notes,
+  const payload: Record<string, unknown> = {};
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.progress !== undefined) payload.progress = updates.progress;
+  if (updates.onHold !== undefined) payload.on_hold = updates.onHold;
+  if (updates.holdReason !== undefined) payload.hold_reason = updates.holdReason;
+  if (updates.holdMessage !== undefined) payload.hold_message = updates.holdMessage;
+  if (updates.paymentPlan !== undefined) payload.payment_plan = updates.paymentPlan;
+  if (updates.totalPaid !== undefined) payload.total_paid = updates.totalPaid;
+  if (Object.keys(payload).length === 0) return;
+  await supabase.from('orders').update(payload).eq('id', orderId);
+}
+
+export async function setupOrderInstallmentsInSupabase(orderId: string, price: number, count: number): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase || count < 2) return;
+  const amount = Math.round((price / count) * 100) / 100;
+  const installments = Array.from({ length: count }, (_, i) => ({
+    order_id: orderId,
+    amount: i === count - 1 ? price - amount * (count - 1) : amount,
+    due_date: new Date(Date.now() + (i + 1) * 15 * 86400000).toISOString().split('T')[0],
     status: 'pending',
-    progress: 0,
-    payment_plan: 'full',
-  });
+    label: `Installment ${i + 1} of ${count}`,
+  }));
+  await supabase.from('installments').delete().eq('order_id', orderId);
+  await supabase.from('installments').insert(installments);
+  await supabase.from('orders').update({ payment_plan: 'installment' }).eq('id', orderId);
+}
+
+export async function markInstallmentPaidInSupabase(orderId: string, installmentId: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  await supabase
+    .from('installments')
+    .update({ status: 'paid', paid_at: new Date().toISOString() })
+    .eq('id', installmentId);
+  const { data } = await supabase.from('installments').select('amount,status').eq('order_id', orderId);
+  const totalPaid = (data || []).filter((i) => i.status === 'paid').reduce((sum, i) => sum + Number(i.amount || 0), 0);
+  const hasOverdue = (data || []).some((i) => i.status === 'overdue');
+  await supabase
+    .from('orders')
+    .update({
+      total_paid: totalPaid,
+      ...(hasOverdue ? {} : { on_hold: false, hold_reason: null, hold_message: null, status: 'in_progress' }),
+    })
+    .eq('id', orderId);
 }
 
 export async function addOrderUpdateInSupabase(orderId: string, message: string, by: OrderUpdate['by']): Promise<void> {
@@ -574,6 +646,31 @@ export async function createActivityLogInSupabase(input: {
     detail: input.detail,
     entity_id: input.entityId || null,
   });
+}
+
+export async function notifyAdminInSupabase(input: {
+  type: Activity['type'];
+  title: string;
+  message: string;
+  entityId?: string;
+}): Promise<{ error?: string; emailSent?: boolean }> {
+  const supabase = getSupabase();
+  if (!supabase) return { error: 'Supabase not configured.' };
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) return { error: 'You must be logged in.' };
+
+  const res = await fetch('/api/notify-admin', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(input),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) return { error: payload.error || 'Unable to notify admin.' };
+  return { emailSent: !!payload.emailSent };
 }
 
 export async function createAdminUserInSupabase(input: {

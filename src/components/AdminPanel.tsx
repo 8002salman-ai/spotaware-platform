@@ -27,6 +27,10 @@ import {
   fetchActivityLogsInSupabase,
   createActivityLogInSupabase,
   createAdminUserInSupabase,
+  createAdminOrderInSupabase,
+  updateOrderInSupabase,
+  setupOrderInstallmentsInSupabase,
+  markInstallmentPaidInSupabase,
 } from '../utils/supabaseData';
 import { getSupabase } from '../utils/supabase';
 import { downloadInvoice, emailInvoiceToClient } from '../utils/invoice';
@@ -956,7 +960,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                             {/* Header */}
                             <div className="flex items-center justify-between mb-2">
                               <p className="text-[13px] text-white font-medium">{o.service} — ${o.price}</p>
-                              <select value={o.status} onChange={e => { updateOrder(o.id, { status: e.target.value as Order['status'] }); reload(); }} className="text-[10px] rounded px-1 py-0.5 border" style={{ background: 'transparent', borderColor: borderLight, color: textSecondary }}>
+                              <select value={o.status} onChange={e => { if (isSupabaseAuthEnabled()) { void updateOrderInSupabase(o.id, { status: e.target.value as Order['status'] }).then(() => reload()); } else { updateOrder(o.id, { status: e.target.value as Order['status'] }); void reload(); } }} className="text-[10px] rounded px-1 py-0.5 border" style={{ background: 'transparent', borderColor: borderLight, color: textSecondary }}>
                                 {['pending','in_progress','review','revision','completed','cancelled','on_hold'].map(s => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </div>
@@ -969,7 +973,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                               </div>
                             )}
                             {/* Progress */}
-                            <div className="flex items-center gap-2 mb-2"><span className="text-xs" style={{ color: textMuted }}>Progress:</span><input type="range" min="0" max="100" value={o.progress} onChange={e => { updateOrder(o.id, { progress: parseInt(e.target.value) }); reload(); }} className="flex-1 h-1" /><span className="text-xs text-cyan-glow">{o.progress}%</span></div>
+                            <div className="flex items-center gap-2 mb-2"><span className="text-xs" style={{ color: textMuted }}>Progress:</span><input type="range" min="0" max="100" value={o.progress} onChange={e => { const progress = parseInt(e.target.value); if (isSupabaseAuthEnabled()) { void updateOrderInSupabase(o.id, { progress }).then(() => reload()); } else { updateOrder(o.id, { progress }); void reload(); } }} className="flex-1 h-1" /><span className="text-xs text-cyan-glow">{o.progress}%</span></div>
                             {/* Payment Plan */}
                             <div className="p-2 rounded-lg mb-2 border" style={{ borderColor: borderLight, background: bgElevated }}>
                               <div className="flex items-center justify-between mb-1">
@@ -982,7 +986,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                                 <div key={inst.id} className="flex items-center justify-between py-1 border-t" style={{ borderColor: borderLight }}>
                                   <span className="text-[10px]" style={{ color: textSecondary }}>{inst.label} — ${inst.amount} — Due: {inst.dueDate}</span>
                                   {inst.status === 'paid' ? <span className="text-[9px] text-green-400">✓ Paid</span> : (
-                                    <button onClick={() => { markInstallmentPaid(o.id, inst.id); reload(); }} className="text-[9px] text-cyan-glow hover:underline">Mark Paid</button>
+                                    <button onClick={() => { if (isSupabaseAuthEnabled()) { void markInstallmentPaidInSupabase(o.id, inst.id).then(() => reload()); } else { markInstallmentPaid(o.id, inst.id); void reload(); } }} className="text-[9px] text-cyan-glow hover:underline">Mark Paid</button>
                                   )}
                                 </div>
                               ))}
@@ -999,7 +1003,11 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                                       dueDate: new Date(Date.now() + (i + 1) * 15 * 86400000).toISOString().split('T')[0],
                                       status: 'pending' as const, label: `Installment ${i + 1} of ${instCount}`,
                                     }));
-                                    updateOrder(o.id, { paymentPlan: 'installment', installments: insts }); reload();
+                                    if (isSupabaseAuthEnabled()) {
+                                      void setupOrderInstallmentsInSupabase(o.id, o.price, instCount).then(() => reload());
+                                    } else {
+                                      updateOrder(o.id, { paymentPlan: 'installment', installments: insts }); void reload();
+                                    }
                                   }} className="text-[10px] text-cyan-glow hover:underline">Setup Flex Payment</button>
                                 </div>
                               )}
@@ -1062,8 +1070,21 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                               <button onClick={() => setShowNewOrder(null)} className="px-3 py-1.5 rounded text-xs border" style={{ borderColor: borderLight, color: textSecondary }}>Cancel</button>
                               <button onClick={() => {
                                 if (!newOrd.service || !newOrd.price) return;
-                                adminCreateOrder(c.id, newOrd.service, newOrd.pkg, newOrd.price, newOrd.notes, newOrd.installments > 1 ? newOrd.installments : undefined);
-                                setShowNewOrder(null); setNewOrd({ service: '', pkg: '', price: 0, notes: '', installments: 1 }); reload();
+                                if (isSupabaseAuthEnabled()) {
+                                  void createAdminOrderInSupabase({
+                                    clientId: c.id,
+                                    service: newOrd.service,
+                                    package: newOrd.pkg,
+                                    price: newOrd.price,
+                                    notes: newOrd.notes,
+                                    installmentCount: newOrd.installments > 1 ? newOrd.installments : undefined,
+                                  }).then(() => {
+                                    setShowNewOrder(null); setNewOrd({ service: '', pkg: '', price: 0, notes: '', installments: 1 }); reload();
+                                  });
+                                } else {
+                                  adminCreateOrder(c.id, newOrd.service, newOrd.pkg, newOrd.price, newOrd.notes, newOrd.installments > 1 ? newOrd.installments : undefined);
+                                  setShowNewOrder(null); setNewOrd({ service: '', pkg: '', price: 0, notes: '', installments: 1 }); void reload();
+                                }
                               }} disabled={!newOrd.service || !newOrd.price} className="flex-1 py-1.5 rounded text-xs font-medium bg-cyan-glow text-midnight disabled:opacity-40">Create Order</button>
                             </div>
                           </div>
