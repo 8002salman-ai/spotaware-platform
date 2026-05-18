@@ -43,6 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return sendError(res, 500, selectError.message);
   }
 
+  let created = false;
   if (!existing) {
     const { error: insertError } = await adminClient.from('profiles').insert({
       id: user.id,
@@ -51,6 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       role: 'client',
     });
     if (insertError) return sendError(res, 500, insertError.message);
+    created = true;
   } else if (!existing.email || !existing.name) {
     const { error: updateError } = await adminClient
       .from('profiles')
@@ -69,5 +71,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .single();
 
   if (profileError) return sendError(res, 500, profileError.message);
-  return res.status(200).json({ profile });
+  return res.status(200).json({ profile, created });
 }

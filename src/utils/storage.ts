@@ -668,6 +668,21 @@ export function verifyAdminLogin(email: string, password: string): AdminUser | n
   return users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === password) || null;
 }
 
+export function createLocalOwner(email: string, password: string): AdminUser | null {
+  const users = getAdminUsers();
+  if (users.length > 0) return null;
+  const owner: AdminUser = { id: `owner_${Date.now()}`, email, password, role: 'owner', createdAt: new Date() };
+  users.push(owner);
+  saveAdminUsers(users);
+  return owner;
+}
+
+export function resetLocalOwner(email: string, password: string): AdminUser {
+  const owner: AdminUser = { id: `owner_${Date.now()}`, email, password, role: 'owner', createdAt: new Date() };
+  saveAdminUsers([owner]);
+  return owner;
+}
+
 export function addAdminUser(email: string, password: string, role: 'admin' | 'viewer'): AdminUser | null {
   const users = getAdminUsers();
   if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) return null; // duplicate

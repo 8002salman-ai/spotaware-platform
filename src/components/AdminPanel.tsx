@@ -1,11 +1,11 @@
 import { motion } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   getLeads, getChatSessions, getProjectSubmissions, getDashboardStats,
   updateLeadStatus, updateSubmissionStatus, deleteLead, deleteSubmission, deleteChatSession,
   verifyAdminLogin, setAdminAuth, getAdminSession,
   clearAllData, exportAllData, getSettings, saveSettings,
-  getAdminUsers, addAdminUser, updateAdminUser, deleteAdminUser,
+  getAdminUsers, createLocalOwner, resetLocalOwner, addAdminUser, updateAdminUser, deleteAdminUser,
   getClients, getOrders, getInvoices, updateOrder, addOrderUpdate, createInvoice, updateInvoiceStatus, deleteInvoice, updateInvoice, calcTax, TX_TAX_RATE,
   holdOrder, resumeOrder, markInstallmentPaid, addClientDeadline, markDeadlineReceived, markDeadlineOverdue,
   type Lead, type ChatSession, type ProjectSubmission, type SiteSettings, type AdminUser,
@@ -14,7 +14,7 @@ import {
   getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
   addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
 } from '../utils/storage';
-import { isSupabaseAuthEnabled, isOAuthReturnInProgress, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { getAuthDebugEntries, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchAdminSnapshot,
   updateLeadStatusInSupabase,
@@ -80,7 +80,14 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [localSetupMode, setLocalSetupMode] = useState(false);
+  const [localResetMode, setLocalResetMode] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(() => isOAuthReturnInProgress());
+  const [authDebug, setAuthDebug] = useState<string[]>(() => getAuthDebugEntries());
+  const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled());
+  const oauthLoadingRef = useRef(oauthLoading);
+  const authHydratingRef = useRef(authHydrating);
   const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [currentUser, setCurrentUser] = useState<{ id: string; email: string; role: string } | null>(null);
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -130,18 +137,23 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const initAuth = async () => {
       if (isSupabaseAuthEnabled()) {
+        setAuthHydrating(true);
         setOauthLoading(isOAuthReturnInProgress());
         const session = await waitForSupabasePortalSession();
         if (session && ['owner', 'admin', 'viewer'].includes(session.role)) {
           setIsAuth(true);
           setCurrentUser({ id: session.id, email: session.email, role: session.role });
+          logAuthDebug('Redirecting to portal');
           setOauthLoading(false);
+          setAuthHydrating(false);
         } else if (session) {
           await supabaseSignOut();
           setLoginError('Access denied: admin role required.');
           setOauthLoading(false);
+          setAuthHydrating(false);
         } else {
           setOauthLoading(false);
+          setAuthHydrating(false);
         }
         return;
       }
@@ -156,6 +168,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
           addNotification('Auto-Check', `${held} orders held for overdue payments, ${deadlines} deadlines overdue`, 'warning');
         }
       }
+      setAuthHydrating(false);
     };
 
     void initAuth();
@@ -163,38 +176,60 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     if (!isSupabaseAuthEnabled()) return;
+    const unsubscribeDebug = subscribeAuthDebug(setAuthDebug);
     const supabase = getSupabase();
-    if (!supabase) return;
+    if (!supabase) return () => unsubscribeDebug();
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+      setAuthDebug((prev) => [...prev, `${new Date().toLocaleTimeString('en-US', { hour12: false })} Auth listener fired: ${event}`].slice(-60));
+      if (event === 'SIGNED_OUT' && (oauthLoadingRef.current || authHydratingRef.current)) {
+        return;
+      }
       if (event === 'SIGNED_OUT') {
         setIsAuth(false);
         setCurrentUser(null);
         setOauthLoading(false);
+        setAuthHydrating(false);
         return;
       }
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
 
+      setAuthHydrating(true);
       const session = await waitForSupabasePortalSession();
-      if (!session) return;
+      if (!session) {
+        setAuthHydrating(false);
+        return;
+      }
       if (!['owner', 'admin', 'viewer'].includes(session.role)) {
         await supabaseSignOut();
         setLoginError('Access denied: admin role required.');
         setOauthLoading(false);
+        setAuthHydrating(false);
         return;
       }
       setIsAuth(true);
       setCurrentUser({ id: session.id, email: session.email, role: session.role });
+      logAuthDebug('Redirecting to portal');
       setLoginError('');
       setOauthLoading(false);
+      setAuthHydrating(false);
     });
 
     return () => {
+      unsubscribeDebug();
       listener.subscription.unsubscribe();
     };
   }, []);
 
   useEffect(() => { if (isAuth) void reload(); }, [isAuth, tab]);
+
+  useEffect(() => {
+    oauthLoadingRef.current = oauthLoading;
+  }, [oauthLoading]);
+
+  useEffect(() => {
+    authHydratingRef.current = authHydrating;
+  }, [authHydrating]);
 
   useEffect(() => {
     if (!isAuth || !isSupabaseAuthEnabled()) return;
@@ -261,7 +296,36 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
     const user = verifyAdminLogin(loginEmail, loginPass);
     if (user) { setAdminAuth(user); setIsAuth(true); setCurrentUser({ id: user.id, email: user.email, role: user.role }); setLoginError(''); }
-    else setLoginError('Invalid email or password');
+    else {
+      const hasLocalAdmins = getAdminUsers().length > 0;
+      setLoginError(hasLocalAdmins ? 'Invalid local email/password. You can reset the local owner below, or use Supabase login on live.' : 'No local admin exists yet. Create a local owner first or configure Supabase.');
+      setLocalSetupMode(true);
+      setLocalResetMode(hasLocalAdmins);
+    }
+  };
+
+  const handleCreateLocalOwner = () => {
+    if (!loginEmail.trim() || !loginPass.trim()) {
+      setLoginError('Enter email and password to create the first local owner.');
+      return;
+    }
+    if (isSupabaseAuthEnabled()) {
+      setLoginError('Supabase is configured. Create admin users through Supabase instead.');
+      return;
+    }
+    const owner = localResetMode
+      ? resetLocalOwner(loginEmail.trim().toLowerCase(), loginPass)
+      : createLocalOwner(loginEmail.trim().toLowerCase(), loginPass);
+    if (!owner) {
+      setLoginError('Local owner already exists. Login with that account.');
+      return;
+    }
+    setAdminAuth(owner);
+    setIsAuth(true);
+    setCurrentUser({ id: owner.id, email: owner.email, role: owner.role });
+    setLocalSetupMode(false);
+    setLocalResetMode(false);
+    setLoginError('');
   };
 
   const handleLogout = async () => {
@@ -354,6 +418,28 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   };
 
   // ── LOGIN ──
+  if (!isAuth && (oauthLoading || authHydrating)) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(4,5,10,0.92)', backdropFilter: 'blur(12px)' }}>
+        <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="w-full max-w-sm rounded-2xl p-8 border text-center" style={{ background: bgCard, borderColor: border }}>
+          <div className="w-12 h-12 rounded-full border-2 border-cyan-glow/40 border-t-cyan-glow animate-spin mx-auto mb-4" />
+          <h2 className="font-display text-lg font-bold text-white">Preparing admin portal</h2>
+          <p className="text-xs mt-2" style={{ color: textSecondary }}>Waiting for session and profile hydration...</p>
+          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
+            <div className="mt-4 p-3 rounded-xl border text-left" style={{ background: bgElevated, borderColor: borderLight }}>
+              <p className="text-[11px] font-semibold mb-1" style={{ color: textSecondary }}>OAuth debug timeline (temporary)</p>
+              <div className="max-h-28 overflow-y-auto space-y-1">
+                {authDebug.slice(-8).map((entry, idx) => (
+                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: textMuted }}>{entry}</p>
+                ))}
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </motion.div>
+    );
+  }
+
   if (!isAuth) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(4,5,10,0.92)', backdropFilter: 'blur(12px)' }}>
@@ -381,25 +467,33 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className="text-xs font-medium mb-1.5 block" style={{ color: textSecondary }}>Password</label>
-              <input type="password" value={loginPass} onChange={e => { setLoginPass(e.target.value); setLoginError(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()}
-                placeholder="••••••••"
-                className="w-full px-4 py-3 rounded-xl text-[14px] text-white focus:outline-none placeholder:text-[#4a4f6a] transition-colors"
-                style={{ background: bgInput, border: `1px solid ${loginError ? '#ef4444' : border}` }}
-              />
+              <div className="relative">
+                <input type={showPassword ? 'text' : 'password'} value={loginPass} onChange={e => { setLoginPass(e.target.value); setLoginError(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                  placeholder="••••••••"
+                  className="w-full px-4 py-3 pr-16 rounded-xl text-[14px] text-white focus:outline-none placeholder:text-[#4a4f6a] transition-colors"
+                  style={{ background: bgInput, border: `1px solid ${loginError ? '#ef4444' : border}` }}
+                />
+                <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs transition-colors hover:text-white" style={{ color: textSecondary }}>
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </div>
             {loginError && <p className="text-red-400 text-xs">{loginError}</p>}
             <button disabled={oauthLoading} onClick={handleLogin} className="w-full py-3.5 rounded-xl bg-cyan-glow text-midnight font-display font-semibold text-sm hover:bg-cyan-soft transition-colors disabled:opacity-60">Login →</button>
-            {isSupabaseAuthEnabled() && (
-              <button disabled={oauthLoading} onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white flex items-center justify-center gap-2.5 disabled:opacity-60" style={{ borderColor: border }}>
-                <svg className="w-4.5 h-4.5" viewBox="0 0 48 48" aria-hidden="true">
-                  <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.655 32.657 29.193 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
-                  <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
-                  <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.193l-6.19-5.238C29.143 35.091 26.715 36 24 36c-5.173 0-9.628-3.327-11.286-7.946l-6.522 5.025C9.507 39.556 16.227 44 24 44z" />
-                  <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-1.058 2.994-3.115 5.347-5.894 6.87l.003-.002 6.19 5.238C35.164 40.38 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
-                </svg>
-                <span>Continue with Google</span>
+            {!isSupabaseAuthEnabled() && localSetupMode && (
+              <button disabled={oauthLoading} onClick={handleCreateLocalOwner} className="w-full py-3 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-cyan-glow disabled:opacity-60" style={{ borderColor: border }}>
+                {localResetMode ? 'Reset Local Owner To This Login' : 'Create Local Owner Account'}
               </button>
             )}
+            <button disabled={oauthLoading} onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white flex items-center justify-center gap-2.5 disabled:opacity-60" style={{ borderColor: border }}>
+              <svg className="w-4.5 h-4.5" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.655 32.657 29.193 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
+                <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
+                <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.193l-6.19-5.238C29.143 35.091 26.715 36 24 36c-5.173 0-9.628-3.327-11.286-7.946l-6.522 5.025C9.507 39.556 16.227 44 24 44z" />
+                <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-1.058 2.994-3.115 5.347-5.894 6.87l.003-.002 6.19 5.238C35.164 40.38 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
+              </svg>
+              <span>Continue with Google</span>
+            </button>
             {isSupabaseAuthEnabled() && (
               <button onClick={handleForgotPassword} disabled={resetState === 'sending'} className="w-full py-2 text-xs transition-colors hover:text-white disabled:opacity-50" style={{ color: textSecondary }}>
                 {resetState === 'sending' ? 'Sending reset email...' : 'Forgot password?'}
@@ -410,6 +504,16 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             )}
             <button onClick={onClose} className="w-full py-2 text-sm transition-colors hover:text-white" style={{ color: textSecondary }}>Cancel</button>
           </div>
+          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
+            <div className="mt-4 p-3 rounded-xl border" style={{ background: bgElevated, borderColor: borderLight }}>
+              <p className="text-[11px] font-semibold mb-1" style={{ color: textSecondary }}>OAuth debug timeline (temporary)</p>
+              <div className="max-h-28 overflow-y-auto space-y-1">
+                {authDebug.slice(-8).map((entry, idx) => (
+                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: textMuted }}>{entry}</p>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgElevated, borderColor: borderLight }}>
             <p className="text-[11px]" style={{ color: textMuted }}>
               Sign in with your authenticated Supabase admin account.

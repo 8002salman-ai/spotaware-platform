@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   verifyClientLogin, registerClient, setClientAuth, getClientSession,
   getClientOrders, getClientInvoices, createOrder, addOrderUpdate, updateClientProfile,
@@ -10,7 +10,7 @@ import {
   type Order, type Invoice, type SupportTicket, type AppNotification, type OrderNote,
 } from '../utils/storage';
 import { downloadInvoice } from '../utils/invoice';
-import { isSupabaseAuthEnabled, isOAuthReturnInProgress, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { getAuthDebugEntries, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchClientOrders,
   fetchClientInvoices,
@@ -77,8 +77,13 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [form, setForm] = useState({ name: '', email: '', password: '', company: '' });
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(() => isOAuthReturnInProgress());
   const [oauthMessage, setOauthMessage] = useState('Signing in with Google...');
+  const [authDebug, setAuthDebug] = useState<string[]>(() => getAuthDebugEntries());
+  const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled());
+  const oauthLoadingRef = useRef(oauthLoading);
+  const authHydratingRef = useRef(authHydrating);
   const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [session, setSession] = useState<{ id: string; name: string; email: string } | null>(null);
   const [view, setView] = useState<View>('dashboard');
@@ -128,29 +133,49 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const initAuth = async () => {
       if (isSupabaseAuthEnabled()) {
+        setAuthHydrating(true);
         setOauthLoading(isOAuthReturnInProgress());
         const s = await waitForSupabasePortalSession();
         if (!s) {
           setOauthLoading(false);
+          setAuthHydrating(false);
           return;
         }
         if (!canAccessClientPortal(s.role)) {
           await supabaseSignOut();
           setError('This account is not allowed to access the client portal.');
           setOauthLoading(false);
+          setAuthHydrating(false);
           return;
         }
         setAuth(true);
         setSession({ id: s.id, name: s.name, email: s.email });
+        logAuthDebug('Redirecting to portal');
         setOauthLoading(false);
+        setAuthHydrating(false);
         return;
       }
 
       const s = getClientSession();
       if (s) { setAuth(true); setSession(s); }
+      setAuthHydrating(false);
     };
     void initAuth();
   }, []);
+
+  useEffect(() => {
+    if (!isSupabaseAuthEnabled()) return;
+    const unsubscribe = subscribeAuthDebug(setAuthDebug);
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    oauthLoadingRef.current = oauthLoading;
+  }, [oauthLoading]);
+
+  useEffect(() => {
+    authHydratingRef.current = authHydrating;
+  }, [authHydrating]);
 
   useEffect(() => {
     if (!isSupabaseAuthEnabled()) return;
@@ -158,26 +183,38 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     if (!supabase) return;
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+      setAuthDebug((prev) => [...prev, `${new Date().toLocaleTimeString('en-US', { hour12: false })} Auth listener fired: ${event}`].slice(-60));
+      if (event === 'SIGNED_OUT' && (oauthLoadingRef.current || authHydratingRef.current)) {
+        return;
+      }
       if (event === 'SIGNED_OUT') {
         setAuth(false);
         setSession(null);
         setOauthLoading(false);
+        setAuthHydrating(false);
         return;
       }
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
 
+      setAuthHydrating(true);
       const s = await waitForSupabasePortalSession();
-      if (!s) return;
+      if (!s) {
+        setAuthHydrating(false);
+        return;
+      }
       if (!canAccessClientPortal(s.role)) {
         await supabaseSignOut();
         setError('This account is not allowed to access the client portal.');
         setOauthLoading(false);
+        setAuthHydrating(false);
         return;
       }
       setAuth(true);
       setSession({ id: s.id, name: s.name, email: s.email });
+      logAuthDebug('Redirecting to portal');
       setError('');
       setOauthLoading(false);
+      setAuthHydrating(false);
     });
 
     return () => {
@@ -402,6 +439,28 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   );
 
   // ── Auth Screen ──
+  if (!auth && (oauthLoading || authHydrating)) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(4,5,10,0.95)' }}>
+        <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="w-full max-w-md rounded-2xl p-8 border text-center" style={{ background: bgCard, borderColor: bd }}>
+          <div className="w-12 h-12 rounded-full border-2 border-cyan-glow/40 border-t-cyan-glow animate-spin mx-auto mb-4" />
+          <h2 className="font-display text-lg font-bold text-white">Preparing your portal</h2>
+          <p className="text-xs mt-2" style={{ color: tSec }}>{oauthMessage}</p>
+          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
+            <div className="mt-4 p-3 rounded-xl border text-left" style={{ background: bgEl, borderColor: bd }}>
+              <p className="text-[11px] font-semibold mb-1" style={{ color: tSec }}>OAuth debug timeline (temporary)</p>
+              <div className="max-h-28 overflow-y-auto space-y-1">
+                {authDebug.slice(-8).map((entry, idx) => (
+                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: tMut }}>{entry}</p>
+                ))}
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </motion.div>
+    );
+  }
+
   if (!auth) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(4,5,10,0.95)' }}>
@@ -424,21 +483,27 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
             )}
             {mode === 'signup' && <Input label="Full Name" value={form.name} onChange={v => setForm({ ...form, name: v })} ph="John Doe" />}
             <Input label="Email" value={form.email} onChange={v => setForm({ ...form, email: v })} type="email" ph="you@company.com" />
-            <Input label="Password" value={form.password} onChange={v => setForm({ ...form, password: v })} type="password" ph="••••••••" />
+            <div>
+              <label className="text-xs font-medium mb-1.5 block" style={{ color: tSec }}>Password</label>
+              <div className="relative">
+                <input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••" className="w-full px-4 py-3 pr-16 rounded-xl text-[14px] text-white focus:outline-none focus:border-cyan-glow/50 placeholder:text-[#4a4f6a] transition-colors" style={{ background: bgIn, border: `1px solid ${bd}` }} />
+                <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs hover:text-white transition-colors" style={{ color: tSec }}>
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
             {mode === 'signup' && <Input label="Company (optional)" value={form.company} onChange={v => setForm({ ...form, company: v })} ph="Acme Inc." />}
             {error && <p className="text-red-400 text-xs">{error}</p>}
             <button disabled={oauthLoading} onClick={mode === 'login' ? handleLogin : handleSignup} className="w-full py-3.5 rounded-xl bg-cyan-glow text-midnight font-display font-semibold text-sm hover:bg-cyan-soft transition-colors disabled:opacity-60">{mode === 'login' ? 'Login →' : 'Create Account →'}</button>
-            {isSupabaseAuthEnabled() && (
-              <button disabled={oauthLoading} onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white flex items-center justify-center gap-2.5 disabled:opacity-60" style={{ borderColor: bd }}>
-                <svg className="w-4.5 h-4.5" viewBox="0 0 48 48" aria-hidden="true">
-                  <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.655 32.657 29.193 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
-                  <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
-                  <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.193l-6.19-5.238C29.143 35.091 26.715 36 24 36c-5.173 0-9.628-3.327-11.286-7.946l-6.522 5.025C9.507 39.556 16.227 44 24 44z" />
-                  <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-1.058 2.994-3.115 5.347-5.894 6.87l.003-.002 6.19 5.238C35.164 40.38 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
-                </svg>
-                <span>Continue with Google</span>
-              </button>
-            )}
+            <button disabled={oauthLoading} onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white flex items-center justify-center gap-2.5 disabled:opacity-60" style={{ borderColor: bd }}>
+              <svg className="w-4.5 h-4.5" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.655 32.657 29.193 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
+                <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
+                <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.193l-6.19-5.238C29.143 35.091 26.715 36 24 36c-5.173 0-9.628-3.327-11.286-7.946l-6.522 5.025C9.507 39.556 16.227 44 24 44z" />
+                <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-1.058 2.994-3.115 5.347-5.894 6.87l.003-.002 6.19 5.238C35.164 40.38 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
+              </svg>
+              <span>Continue with Google</span>
+            </button>
             {isSupabaseAuthEnabled() && mode === 'login' && (
               <button onClick={handleForgotPassword} disabled={resetState === 'sending'} className="w-full py-2 text-xs transition-colors hover:text-white disabled:opacity-50" style={{ color: tSec }}>
                 {resetState === 'sending' ? 'Sending reset email...' : 'Forgot password?'}
@@ -449,6 +514,16 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
             )}
             <button onClick={onClose} className="w-full py-2 text-sm hover:text-white transition-colors" style={{ color: tSec }}>Back to site</button>
           </div>
+          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
+            <div className="mt-4 p-3 rounded-xl border" style={{ background: bgEl, borderColor: bd }}>
+              <p className="text-[11px] font-semibold mb-1" style={{ color: tSec }}>OAuth debug timeline (temporary)</p>
+              <div className="max-h-28 overflow-y-auto space-y-1">
+                {authDebug.slice(-8).map((entry, idx) => (
+                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: tMut }}>{entry}</p>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgEl, borderColor: '#1e2035' }}>
             <p className="text-[11px]" style={{ color: tMut }}>
               Create a real client account or sign in using your existing Supabase credentials.

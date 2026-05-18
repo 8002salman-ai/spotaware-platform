@@ -15,6 +15,42 @@ type SignUpInput = {
   role?: PortalSession['role'];
 };
 
+type AuthDebugListener = (entries: string[]) => void;
+
+const authDebugEntries: string[] = [];
+const authDebugListeners = new Set<AuthDebugListener>();
+
+function emitAuthDebug(message: string): void {
+  if (typeof window === 'undefined') return;
+  const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+  authDebugEntries.push(`${timestamp} ${message}`);
+  if (authDebugEntries.length > 60) authDebugEntries.shift();
+  const snapshot = [...authDebugEntries];
+  authDebugListeners.forEach((listener) => listener(snapshot));
+}
+
+export function logAuthDebug(message: string): void {
+  emitAuthDebug(message);
+}
+
+export function clearAuthDebugEntries(): void {
+  authDebugEntries.length = 0;
+  const snapshot = [...authDebugEntries];
+  authDebugListeners.forEach((listener) => listener(snapshot));
+}
+
+export function getAuthDebugEntries(): string[] {
+  return [...authDebugEntries];
+}
+
+export function subscribeAuthDebug(listener: AuthDebugListener): () => void {
+  authDebugListeners.add(listener);
+  listener([...authDebugEntries]);
+  return () => {
+    authDebugListeners.delete(listener);
+  };
+}
+
 function normalizeRole(role: string | null | undefined): PortalSession['role'] {
   if (role === 'owner' || role === 'admin' || role === 'viewer' || role === 'client') {
     return role;
@@ -25,20 +61,34 @@ function normalizeRole(role: string | null | undefined): PortalSession['role'] {
 export function isOAuthReturnInProgress(): boolean {
   if (typeof window === 'undefined') return false;
   const url = new URL(window.location.href);
-  return Boolean(url.searchParams.get('code') || url.searchParams.get('state'));
+  const inProgress = Boolean(url.searchParams.get('code') || url.searchParams.get('state'));
+  if (inProgress) {
+    emitAuthDebug('OAuth redirect detected');
+  }
+  return inProgress;
 }
 
 async function ensureProfileViaApi(accessToken: string): Promise<void> {
   if (typeof window === 'undefined') return;
   try {
-    await fetch('/api/ensure-profile', {
+    emitAuthDebug('Profile ensure request started');
+    const response = await fetch('/api/ensure-profile', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
     });
+    const body = await response.json().catch(() => null) as { created?: boolean } | null;
+    if (response.ok && body?.created) {
+      emitAuthDebug('Profile created');
+    } else if (response.ok) {
+      emitAuthDebug('Profile already existed');
+    } else {
+      emitAuthDebug('Profile ensure request failed');
+    }
   } catch {
+    emitAuthDebug('Profile ensure request failed');
     // Best-effort helper for environments where API isn't reachable.
   }
 }
@@ -50,6 +100,7 @@ async function exchangeOAuthCodeFromUrl(): Promise<void> {
   const url = new URL(window.location.href);
   const code = url.searchParams.get('code');
   if (!code) return;
+  emitAuthDebug('exchangeCodeForSession started');
 
   const clearOAuthParams = () => {
     url.searchParams.delete('code');
@@ -60,6 +111,7 @@ async function exchangeOAuthCodeFromUrl(): Promise<void> {
   // If session is already set, just clean URL and continue.
   const { data: existing } = await supabase.auth.getSession();
   if (existing.session?.user) {
+    emitAuthDebug('Session loaded (already present before exchange)');
     clearOAuthParams();
     return;
   }
@@ -67,16 +119,20 @@ async function exchangeOAuthCodeFromUrl(): Promise<void> {
   try {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      emitAuthDebug('exchangeCodeForSession completed');
       clearOAuthParams();
       return;
     }
+    emitAuthDebug(`exchangeCodeForSession error: ${error.message}`);
   } catch {
+    emitAuthDebug('exchangeCodeForSession threw exception');
     // Supabase may already be processing this in detectSessionInUrl.
   }
 
   // Mobile browsers can be slower; only clear params once a session exists.
   const { data: afterExchange } = await supabase.auth.getSession();
   if (afterExchange.session?.user) {
+    emitAuthDebug('Session loaded after exchange fallback check');
     clearOAuthParams();
   }
 }
@@ -91,21 +147,41 @@ export async function getSupabasePortalSession(): Promise<PortalSession | null> 
   await exchangeOAuthCodeFromUrl();
 
   const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session?.user) return null;
+  if (error || !data.session?.user) {
+    emitAuthDebug(`Session load failed${error ? `: ${error.message}` : ''}`);
+    return null;
+  }
+  emitAuthDebug('Session loaded');
   await ensureProfileViaApi(data.session.access_token);
 
   const user = data.session.user;
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('id,email,name,role')
-    .eq('id', user.id)
-    .maybeSingle();
+  let profile: { id: string; email: string | null; name: string | null; role: string | null } | null = null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    emitAuthDebug('Profile fetch started');
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('id,email,name,role')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (profileRow) {
+      profile = profileRow;
+      break;
+    }
+    await ensureProfileViaApi(data.session.access_token);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!profile) {
+    emitAuthDebug('Profile fetch failed: still missing');
+    return null;
+  }
+  emitAuthDebug('Profile loaded');
+  emitAuthDebug(`Role detected: ${normalizeRole(profile.role)}`);
 
   return {
     id: user.id,
-    email: profile?.email || user.email || '',
-    name: profile?.name || (user.user_metadata?.name as string | undefined) || user.email?.split('@')[0] || 'User',
-    role: normalizeRole(profile?.role),
+    email: profile.email || user.email || '',
+    name: profile.name || (user.user_metadata?.name as string | undefined) || user.email?.split('@')[0] || 'User',
+    role: normalizeRole(profile.role),
   };
 }
 
@@ -161,8 +237,11 @@ export async function supabaseSignOut(): Promise<void> {
 export async function supabaseSignInWithGoogle(target: 'admin' | 'client'): Promise<{ error?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { error: 'Supabase not configured.' };
+  clearAuthDebugEntries();
+  emitAuthDebug(`Google OAuth initiated for /${target}`);
 
   const redirectTo = `${window.location.origin}/${target}`;
+  emitAuthDebug(`Redirect triggered to ${redirectTo}`);
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
@@ -173,7 +252,11 @@ export async function supabaseSignInWithGoogle(target: 'admin' | 'client'): Prom
     },
   });
 
-  if (error) return { error: error.message };
+  if (error) {
+    emitAuthDebug(`OAuth initiation failed: ${error.message}`);
+    return { error: error.message };
+  }
+  emitAuthDebug('OAuth provider page opened');
   return {};
 }
 
