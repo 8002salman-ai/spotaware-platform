@@ -22,6 +22,27 @@ function normalizeRole(role: string | null | undefined): PortalSession['role'] {
   return 'client';
 }
 
+export function isOAuthReturnInProgress(): boolean {
+  if (typeof window === 'undefined') return false;
+  const url = new URL(window.location.href);
+  return Boolean(url.searchParams.get('code') || url.searchParams.get('state'));
+}
+
+async function ensureProfileViaApi(accessToken: string): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await fetch('/api/ensure-profile', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  } catch {
+    // Best-effort helper for environments where API isn't reachable.
+  }
+}
+
 async function exchangeOAuthCodeFromUrl(): Promise<void> {
   const supabase = getSupabase();
   if (!supabase || typeof window === 'undefined') return;
@@ -71,6 +92,7 @@ export async function getSupabasePortalSession(): Promise<PortalSession | null> 
 
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session?.user) return null;
+  await ensureProfileViaApi(data.session.access_token);
 
   const user = data.session.user;
   const { data: profile } = await supabase

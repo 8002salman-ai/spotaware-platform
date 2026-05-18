@@ -14,7 +14,7 @@ import {
   getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
   addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
 } from '../utils/storage';
-import { isSupabaseAuthEnabled, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { isSupabaseAuthEnabled, isOAuthReturnInProgress, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchAdminSnapshot,
   updateLeadStatusInSupabase,
@@ -80,6 +80,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [oauthLoading, setOauthLoading] = useState(() => isOAuthReturnInProgress());
   const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [currentUser, setCurrentUser] = useState<{ id: string; email: string; role: string } | null>(null);
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -129,13 +130,18 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const initAuth = async () => {
       if (isSupabaseAuthEnabled()) {
+        setOauthLoading(isOAuthReturnInProgress());
         const session = await waitForSupabasePortalSession();
         if (session && ['owner', 'admin', 'viewer'].includes(session.role)) {
           setIsAuth(true);
           setCurrentUser({ id: session.id, email: session.email, role: session.role });
+          setOauthLoading(false);
         } else if (session) {
           await supabaseSignOut();
           setLoginError('Access denied: admin role required.');
+          setOauthLoading(false);
+        } else {
+          setOauthLoading(false);
         }
         return;
       }
@@ -164,6 +170,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
       if (event === 'SIGNED_OUT') {
         setIsAuth(false);
         setCurrentUser(null);
+        setOauthLoading(false);
         return;
       }
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
@@ -173,11 +180,13 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
       if (!['owner', 'admin', 'viewer'].includes(session.role)) {
         await supabaseSignOut();
         setLoginError('Access denied: admin role required.');
+        setOauthLoading(false);
         return;
       }
       setIsAuth(true);
       setCurrentUser({ id: session.id, email: session.email, role: session.role });
       setLoginError('');
+      setOauthLoading(false);
     });
 
     return () => {
@@ -267,8 +276,13 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleGoogleLogin = async () => {
+    setLoginError('');
+    setOauthLoading(true);
     const { error } = await supabaseSignInWithGoogle('admin');
-    if (error) setLoginError(error);
+    if (error) {
+      setOauthLoading(false);
+      setLoginError(error);
+    }
   };
 
   const handleForgotPassword = async () => {
@@ -352,6 +366,11 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             <p className="text-sm mt-1" style={{ color: textSecondary }}>SpotAware.dev Dashboard</p>
           </div>
           <div className="space-y-4">
+            {oauthLoading && (
+              <div className="rounded-xl border px-4 py-3 text-xs text-cyan-glow bg-cyan-glow/10 border-cyan-glow/20">
+                Signing in with Google...
+              </div>
+            )}
             <div>
               <label className="text-xs font-medium mb-1.5 block" style={{ color: textSecondary }}>Email</label>
               <input type="email" value={loginEmail} onChange={e => { setLoginEmail(e.target.value); setLoginError(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()}
@@ -369,9 +388,9 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
               />
             </div>
             {loginError && <p className="text-red-400 text-xs">{loginError}</p>}
-            <button onClick={handleLogin} className="w-full py-3.5 rounded-xl bg-cyan-glow text-midnight font-display font-semibold text-sm hover:bg-cyan-soft transition-colors">Login →</button>
+            <button disabled={oauthLoading} onClick={handleLogin} className="w-full py-3.5 rounded-xl bg-cyan-glow text-midnight font-display font-semibold text-sm hover:bg-cyan-soft transition-colors disabled:opacity-60">Login →</button>
             {isSupabaseAuthEnabled() && (
-              <button onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white flex items-center justify-center gap-2.5" style={{ borderColor: border }}>
+              <button disabled={oauthLoading} onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white flex items-center justify-center gap-2.5 disabled:opacity-60" style={{ borderColor: border }}>
                 <svg className="w-4.5 h-4.5" viewBox="0 0 48 48" aria-hidden="true">
                   <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.655 32.657 29.193 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
                   <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.053 6.053 29.27 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
