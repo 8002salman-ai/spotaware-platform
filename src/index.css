@@ -163,13 +163,31 @@ body {
 .light-theme .bg-surface-card { background: var(--t-card) !important; }
 .light-theme .bg-surface-elevated { background: var(--t-el) !important; }
 
+.light-theme input,
+.light-theme textarea,
+.light-theme select {
+  color: var(--t-primary, #0f172a) !important;
+  background: var(--t-in, #e8ebf0) !important;
+  border-color: var(--t-bd, #d5d9e2) !important;
+}
+
+.light-theme input::placeholder,
+.light-theme textarea::placeholder {
+  color: var(--t-mut, #64748b) !important;
+}
+
+.light-theme option {
+  color: var(--t-primary, #0f172a);
+  background: var(--t-card, #ffffff);
+}
+
 .light-theme .glass-panel {
-  background: rgba(255,255,255,0.75) !important;
-  border-color: rgba(0,0,0,0.06) !important;
+  background: var(--t-glass, rgba(255,255,255,0.78)) !important;
+  border-color: color-mix(in srgb, var(--t-bd, #d5d9e2) 70%, transparent) !important;
 }
 .light-theme .glass-strong {
-  background: rgba(255,255,255,0.92) !important;
-  border-color: rgba(0,0,0,0.08) !important;
+  background: var(--t-glass-s, rgba(255,255,255,0.94)) !important;
+  border-color: color-mix(in srgb, var(--t-bd, #d5d9e2) 80%, transparent) !important;
 }
 
 .light-theme .premium-shadow { box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04) !important; }
@@ -190,6 +208,11 @@ body {
 .light-theme .text-cyan-glow { color: var(--ta) !important; }
 .light-theme .text-midnight { color: #ffffff !important; }
 .light-theme .bg-midnight { background: #0f172a !important; }
+.light-theme .border-gray-soft\/30,
+.light-theme .border-gray-soft\/40,
+.light-theme .border-gray-soft\/50 {
+  border-color: color-mix(in srgb, var(--t-bd, #d5d9e2) 80%, transparent) !important;
+}
 
 .light-theme ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); }
 

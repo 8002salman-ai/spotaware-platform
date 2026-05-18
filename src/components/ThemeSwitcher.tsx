@@ -130,7 +130,7 @@ export default function ThemeSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0" onClick={() => setOpen(false)} />
-          <div className="absolute top-11 right-0 w-52 rounded-xl overflow-hidden shadow-2xl z-10"
+          <div className="absolute top-11 right-0 w-56 rounded-xl overflow-hidden shadow-2xl z-10"
             style={{ background: 'var(--t-card)', border: '1px solid var(--t-bd)' }}>
             <div className="px-3 py-2.5 border-b flex items-center justify-between" style={{ borderColor: 'var(--t-bdl)' }}>
               <p className="text-[12px] font-semibold" style={{ color: 'var(--t-primary)' }}>Choose Theme</p>
@@ -146,6 +146,23 @@ export default function ThemeSwitcher() {
                   <div className="flex gap-0.5">
                     <span className="w-3.5 h-3.5 rounded-full border" style={{ background: t.accent, borderColor: t.accent + '40' }} />
                     <span className="w-3.5 h-3.5 rounded-full" style={{ background: t.bg, border: `1px solid ${t.border}` }} />
+                  </div>
+                  <span className="text-[12px] font-medium flex-1" style={{ color: 'var(--t-primary)' }}>{t.name}</span>
+                  {active === t.id && <span className="text-[11px]" style={{ color: t.accent }}>✓</span>}
+                </button>
+              ))}
+
+              <div className="my-1.5 mx-2 h-[1px]" style={{ background: 'var(--t-bdl)' }} />
+
+              <p className="px-2 py-1 text-[10px] font-medium" style={{ color: 'var(--t-mut)' }}>Light</p>
+              {themes.filter(t => t.light).map(t => (
+                <button key={t.id} onClick={() => select(t.id)}
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-colors ${active === t.id ? '' : 'hover:opacity-80'}`}
+                  style={active === t.id ? { background: `${t.accent}15` } : undefined}>
+                  <div className="flex gap-0.5">
+                    <span className="w-3.5 h-3.5 rounded-full border" style={{ background: t.accent, borderColor: t.accent + '40' }} />
+                    <span className="w-3.5 h-3.5 rounded-full" style={{ background: t.bg, border: `1px solid ${t.border}` }} />
+                    <span className="w-3.5 h-3.5 rounded-full" style={{ background: t.card, border: `1px solid ${t.borderLight}` }} />
                   </div>
                   <span className="text-[12px] font-medium flex-1" style={{ color: 'var(--t-primary)' }}>{t.name}</span>
                   {active === t.id && <span className="text-[11px]" style={{ color: t.accent }}>✓</span>}

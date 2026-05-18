@@ -44,22 +44,10 @@ export default function Hero({ onPortalOpen }: HeroProps) {
       </div>
 
       <div className="relative z-10 max-w-4xl mx-auto text-center">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.2 }}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass-panel neon-border mb-8"
-        >
-          <span className="w-2 h-2 rounded-full bg-cyan-glow animate-pulse" />
-          <span className="text-xs font-medium tracking-wider text-charcoal-light uppercase">
-            Now accepting Q1 projects
-          </span>
-        </motion.div>
-
         <motion.h1
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: 0.7, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
           className="font-display text-[2.1rem] leading-[1.1] sm:text-[2.6rem] md:text-7xl md:leading-[1.05] font-bold tracking-tight mb-5"
           style={{ color: 'var(--t-primary, #eaecf4)' }}
         >
