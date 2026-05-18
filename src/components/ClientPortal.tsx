@@ -70,6 +70,7 @@ const statusMap: Record<string, { label: string; color: string }> = {
 };
 
 const fmt = (d: Date | string) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const canAccessClientPortal = (role?: string) => ['client', 'owner', 'admin', 'viewer'].includes(role || '');
 
 export default function ClientPortal({ onClose }: { onClose: () => void }) {
   const [auth, setAuth] = useState(false);
@@ -127,9 +128,9 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
       if (isSupabaseAuthEnabled()) {
         const s = await getSupabasePortalSession();
         if (!s) return;
-        if (s.role !== 'client') {
+        if (!canAccessClientPortal(s.role)) {
           await supabaseSignOut();
-          setError('This account is not a client account.');
+          setError('This account is not allowed to access the client portal.');
           return;
         }
         setAuth(true);
@@ -190,8 +191,8 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
         setError(authError || 'Invalid email or password');
         return;
       }
-      if (authSession.role !== 'client') {
-        setError('This account is not a client account.');
+      if (!canAccessClientPortal(authSession.role)) {
+        setError('This account is not allowed to access the client portal.');
         return;
       }
       setAuth(true);
