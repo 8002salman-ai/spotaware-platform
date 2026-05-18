@@ -10,7 +10,7 @@ import {
   type Order, type Invoice, type SupportTicket, type AppNotification, type OrderNote,
 } from '../utils/storage';
 import { downloadInvoice } from '../utils/invoice';
-import { getAuthDebugEntries, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { getAuthDebugEntries, hydrateSupabasePortalSession, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchClientOrders,
   fetchClientInvoices,
@@ -184,7 +184,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     const supabase = getSupabase();
     if (!supabase) return;
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       setAuthDebug((prev) => [...prev, `${new Date().toLocaleTimeString('en-US', { hour12: false })} Auth listener fired: ${event}`].slice(-60));
       if (event === 'SIGNED_OUT' && (oauthLoadingRef.current || authHydratingRef.current)) {
         return;
@@ -199,8 +199,12 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
 
       setAuthHydrating(true);
-      const s = await waitForSupabasePortalSession();
+      const s = authSession
+        ? await hydrateSupabasePortalSession(authSession)
+        : await waitForSupabasePortalSession();
       if (!s) {
+        setError('Signed in, but profile could not load. Please refresh once or try again.');
+        setOauthLoading(false);
         setAuthHydrating(false);
         return;
       }

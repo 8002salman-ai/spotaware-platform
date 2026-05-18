@@ -15,6 +15,15 @@ type SignUpInput = {
   role?: PortalSession['role'];
 };
 
+type SupabaseAuthSession = {
+  access_token: string;
+  user: {
+    id: string;
+    email?: string;
+    user_metadata?: Record<string, unknown>;
+  };
+};
+
 type AuthDebugListener = (entries: string[]) => void;
 const AUTH_DEBUG_KEY = 'spotaware_auth_debug';
 
@@ -92,6 +101,8 @@ export function isOAuthReturnInProgress(): boolean {
 
 async function ensureProfileViaApi(accessToken: string): Promise<void> {
   if (typeof window === 'undefined') return;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 3500);
   try {
     emitAuthDebug('Profile ensure request started');
     const response = await fetch('/api/ensure-profile', {
@@ -100,6 +111,7 @@ async function ensureProfileViaApi(accessToken: string): Promise<void> {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
+      signal: controller.signal,
     });
     const body = await response.json().catch(() => null) as { created?: boolean } | null;
     if (response.ok && body?.created) {
@@ -112,6 +124,8 @@ async function ensureProfileViaApi(accessToken: string): Promise<void> {
   } catch {
     emitAuthDebug('Profile ensure request failed');
     // Best-effort helper for environments where API isn't reachable.
+  } finally {
+    window.clearTimeout(timer);
   }
 }
 
@@ -163,20 +177,13 @@ export function isSupabaseAuthEnabled(): boolean {
   return isSupabaseConfigured();
 }
 
-export async function getSupabasePortalSession(): Promise<PortalSession | null> {
+export async function hydrateSupabasePortalSession(authSession: SupabaseAuthSession): Promise<PortalSession | null> {
   const supabase = getSupabase();
   if (!supabase) return null;
-  await exchangeOAuthCodeFromUrl();
-
-  const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session?.user) {
-    emitAuthDebug(`Session load failed${error ? `: ${error.message}` : ''}`);
-    return null;
-  }
   emitAuthDebug('Session loaded');
-  await ensureProfileViaApi(data.session.access_token);
+  await ensureProfileViaApi(authSession.access_token);
 
-  const user = data.session.user;
+  const user = authSession.user;
   let profile: { id: string; email: string | null; name: string | null; role: string | null } | null = null;
   for (let attempt = 0; attempt < 8; attempt++) {
     emitAuthDebug('Profile fetch started');
@@ -189,7 +196,7 @@ export async function getSupabasePortalSession(): Promise<PortalSession | null> 
       profile = profileRow;
       break;
     }
-    await ensureProfileViaApi(data.session.access_token);
+    await ensureProfileViaApi(authSession.access_token);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!profile) {
@@ -207,7 +214,20 @@ export async function getSupabasePortalSession(): Promise<PortalSession | null> 
   };
 }
 
-export async function waitForSupabasePortalSession(retries = 25, delayMs = 400): Promise<PortalSession | null> {
+export async function getSupabasePortalSession(): Promise<PortalSession | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  await exchangeOAuthCodeFromUrl();
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.user) {
+    emitAuthDebug(`Session load failed${error ? `: ${error.message}` : ''}`);
+    return null;
+  }
+  return hydrateSupabasePortalSession(data.session as SupabaseAuthSession);
+}
+
+export async function waitForSupabasePortalSession(retries = 12, delayMs = 350): Promise<PortalSession | null> {
   for (let i = 0; i < retries; i++) {
     const session = await getSupabasePortalSession();
     if (session) return session;

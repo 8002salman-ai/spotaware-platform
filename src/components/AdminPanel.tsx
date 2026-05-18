@@ -14,7 +14,7 @@ import {
   getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
   addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
 } from '../utils/storage';
-import { getAuthDebugEntries, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { getAuthDebugEntries, hydrateSupabasePortalSession, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchAdminSnapshot,
   updateLeadStatusInSupabase,
@@ -181,7 +181,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     const supabase = getSupabase();
     if (!supabase) return () => unsubscribeDebug();
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, authSession) => {
       setAuthDebug((prev) => [...prev, `${new Date().toLocaleTimeString('en-US', { hour12: false })} Auth listener fired: ${event}`].slice(-60));
       if (event === 'SIGNED_OUT' && (oauthLoadingRef.current || authHydratingRef.current)) {
         return;
@@ -196,8 +196,12 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
 
       setAuthHydrating(true);
-      const session = await waitForSupabasePortalSession();
+      const session = authSession
+        ? await hydrateSupabasePortalSession(authSession)
+        : await waitForSupabasePortalSession();
       if (!session) {
+        setLoginError('Signed in, but profile could not load. Please refresh once or try again.');
+        setOauthLoading(false);
         setAuthHydrating(false);
         return;
       }
