@@ -26,6 +26,7 @@ import {
   deleteChatSessionInSupabase,
   fetchActivityLogsInSupabase,
   createActivityLogInSupabase,
+  createAdminUserInSupabase,
 } from '../utils/supabaseData';
 import { getSupabase } from '../utils/supabase';
 import { downloadInvoice, emailInvoiceToClient } from '../utils/invoice';
@@ -265,9 +266,21 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     setTimeout(() => setTestEmail('idle'), 3000);
   };
 
-  const handleAddUser = () => {
+  const handleAddUser = async () => {
     if (isSupabaseAuthEnabled()) {
-      alert('Use Supabase Auth dashboard or backend admin API to create admin users securely.');
+      if (!newUserEmail || !newUserPass) return;
+      const { error } = await createAdminUserInSupabase({
+        email: newUserEmail,
+        password: newUserPass,
+        role: newUserRole,
+      });
+      if (error) {
+        alert(error);
+        return;
+      }
+      setNewUserEmail('');
+      setNewUserPass('');
+      await reload();
       return;
     }
     if (!newUserEmail || !newUserPass) return;
@@ -903,7 +916,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
               <div className="p-5 space-y-4">
                 {isSupabaseAuthEnabled() && (
                   <div className="rounded-lg border p-3 text-[12px]" style={{ borderColor: borderLight, color: textMuted, background: bgElevated }}>
-                    User creation and role management are handled through Supabase Auth / backend admin APIs.
+                    Creates a real Supabase Auth user. Requires <code className="text-cyan-glow">SUPABASE_SERVICE_ROLE_KEY</code> in Vercel env vars.
                   </div>
                 )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -914,7 +927,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                   <select value={newUserRole} onChange={e => setNewUserRole(e.target.value as 'admin' | 'viewer')} className="px-4 py-2.5 rounded-lg text-[13px] text-white focus:outline-none" style={{ background: bgInput, border: `1px solid ${border}` }}>
                     <option value="admin">🛡 Admin — Full access</option><option value="viewer">👁 Viewer — Read only</option>
                   </select></div>
-                <button onClick={handleAddUser} disabled={!newUserEmail || !newUserPass || isSupabaseAuthEnabled()} className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-cyan-glow text-midnight hover:bg-cyan-soft disabled:opacity-40 transition-colors">Add User</button>
+                <button onClick={handleAddUser} disabled={!newUserEmail || !newUserPass} className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-cyan-glow text-midnight hover:bg-cyan-soft disabled:opacity-40 transition-colors">Add User</button>
               </div>
             </div>
           </div>

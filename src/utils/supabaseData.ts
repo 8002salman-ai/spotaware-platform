@@ -575,3 +575,32 @@ export async function createActivityLogInSupabase(input: {
     entity_id: input.entityId || null,
   });
 }
+
+export async function createAdminUserInSupabase(input: {
+  email: string;
+  password: string;
+  role: 'admin' | 'viewer';
+}): Promise<{ error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { error: 'Supabase not configured.' };
+
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) return { error: 'You must be logged in as owner/admin.' };
+
+  const res = await fetch('/api/admin-users', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(input),
+  });
+
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { error: payload.error || 'Unable to create admin user.' };
+  }
+
+  return {};
+}
