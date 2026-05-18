@@ -87,3 +87,26 @@ export async function supabaseSignOut(): Promise<void> {
   if (!supabase) return;
   await supabase.auth.signOut();
 }
+
+export async function supabaseSignInWithGoogle(target: 'admin' | 'client'): Promise<{ error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { error: 'Supabase not configured.' };
+
+  const redirectTo = `${window.location.origin}/${target}`;
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo },
+  });
+
+  if (error) return { error: error.message };
+  return {};
+}
+
+export async function supabaseSendPasswordReset(email: string, target: 'admin' | 'client'): Promise<{ error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { error: 'Supabase not configured.' };
+  const redirectTo = `${window.location.origin}/${target}`;
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) return { error: error.message };
+  return {};
+}

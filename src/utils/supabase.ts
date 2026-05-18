@@ -28,7 +28,14 @@ export function getSupabase(): SupabaseClient | null {
   if (_supabase) return _supabase;
   const config = getSupabaseConfig();
   if (!config) return null;
-  _supabase = createClient(config.url, config.anonKey);
+  _supabase = createClient(config.url, config.anonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: 'pkce',
+    },
+  });
   return _supabase;
 }
 

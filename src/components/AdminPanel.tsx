@@ -14,7 +14,7 @@ import {
   getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
   addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
 } from '../utils/storage';
-import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut } from '../utils/auth';
+import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchAdminSnapshot,
   updateLeadStatusInSupabase,
@@ -75,6 +75,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [currentUser, setCurrentUser] = useState<{ id: string; email: string; role: string } | null>(null);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -230,6 +231,27 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
+  const handleGoogleLogin = async () => {
+    const { error } = await supabaseSignInWithGoogle('admin');
+    if (error) setLoginError(error);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!loginEmail.trim()) {
+      setLoginError('Enter your email first to reset password.');
+      return;
+    }
+    setResetState('sending');
+    const { error } = await supabaseSendPasswordReset(loginEmail.trim(), 'admin');
+    if (error) {
+      setResetState('error');
+      setLoginError(error);
+      return;
+    }
+    setResetState('sent');
+    setLoginError('');
+  };
+
   const handleSaveSettings = () => { saveSettings(settings); setSaved(true); setTimeout(() => setSaved(false), 3000); };
 
   const handleTestEmail = async () => {
@@ -301,6 +323,19 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             </div>
             {loginError && <p className="text-red-400 text-xs">{loginError}</p>}
             <button onClick={handleLogin} className="w-full py-3.5 rounded-xl bg-cyan-glow text-midnight font-display font-semibold text-sm hover:bg-cyan-soft transition-colors">Login →</button>
+            {isSupabaseAuthEnabled() && (
+              <button onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white" style={{ borderColor: border }}>
+                Continue with Google
+              </button>
+            )}
+            {isSupabaseAuthEnabled() && (
+              <button onClick={handleForgotPassword} disabled={resetState === 'sending'} className="w-full py-2 text-xs transition-colors hover:text-white disabled:opacity-50" style={{ color: textSecondary }}>
+                {resetState === 'sending' ? 'Sending reset email...' : 'Forgot password?'}
+              </button>
+            )}
+            {isSupabaseAuthEnabled() && resetState === 'sent' && (
+              <p className="text-green-400 text-xs text-center">Reset password email sent. Please check your inbox.</p>
+            )}
             <button onClick={onClose} className="w-full py-2 text-sm transition-colors hover:text-white" style={{ color: textSecondary }}>Cancel</button>
           </div>
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgElevated, borderColor: borderLight }}>

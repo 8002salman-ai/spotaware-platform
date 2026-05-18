@@ -10,7 +10,7 @@ import {
   type Order, type Invoice, type SupportTicket, type AppNotification, type OrderNote,
 } from '../utils/storage';
 import { downloadInvoice } from '../utils/invoice';
-import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp } from '../utils/auth';
+import { isSupabaseAuthEnabled, getSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchClientOrders,
   fetchClientInvoices,
@@ -76,6 +76,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [form, setForm] = useState({ name: '', email: '', password: '', company: '' });
   const [error, setError] = useState('');
+  const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [session, setSession] = useState<{ id: string; name: string; email: string } | null>(null);
   const [view, setView] = useState<View>('dashboard');
   const [orders, setOrders] = useState<Order[]>([]);
@@ -246,6 +247,27 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
+  const handleGoogleLogin = async () => {
+    const { error: oauthError } = await supabaseSignInWithGoogle('client');
+    if (oauthError) setError(oauthError);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!form.email.trim()) {
+      setError('Please enter your email first.');
+      return;
+    }
+    setResetState('sending');
+    const { error: resetError } = await supabaseSendPasswordReset(form.email.trim(), 'client');
+    if (resetError) {
+      setResetState('error');
+      setError(resetError);
+      return;
+    }
+    setResetState('sent');
+    setError('');
+  };
+
   const handlePlaceOrder = async () => {
     if (!orderService || !session) return;
     const svc = SERVICES.flatMap(c => c.items).find(i => i.name === orderService);
@@ -356,6 +378,19 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
             {mode === 'signup' && <Input label="Company (optional)" value={form.company} onChange={v => setForm({ ...form, company: v })} ph="Acme Inc." />}
             {error && <p className="text-red-400 text-xs">{error}</p>}
             <button onClick={mode === 'login' ? handleLogin : handleSignup} className="w-full py-3.5 rounded-xl bg-cyan-glow text-midnight font-display font-semibold text-sm hover:bg-cyan-soft transition-colors">{mode === 'login' ? 'Login →' : 'Create Account →'}</button>
+            {isSupabaseAuthEnabled() && (
+              <button onClick={handleGoogleLogin} className="w-full py-3.5 rounded-xl border text-sm font-medium transition-colors hover:bg-white/5 text-white" style={{ borderColor: bd }}>
+                Continue with Google
+              </button>
+            )}
+            {isSupabaseAuthEnabled() && mode === 'login' && (
+              <button onClick={handleForgotPassword} disabled={resetState === 'sending'} className="w-full py-2 text-xs transition-colors hover:text-white disabled:opacity-50" style={{ color: tSec }}>
+                {resetState === 'sending' ? 'Sending reset email...' : 'Forgot password?'}
+              </button>
+            )}
+            {isSupabaseAuthEnabled() && resetState === 'sent' && (
+              <p className="text-green-400 text-xs text-center">Reset password email sent. Check your inbox.</p>
+            )}
             <button onClick={onClose} className="w-full py-2 text-sm hover:text-white transition-colors" style={{ color: tSec }}>Back to site</button>
           </div>
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgEl, borderColor: '#1e2035' }}>
