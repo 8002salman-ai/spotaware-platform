@@ -10,7 +10,7 @@ import {
   type Order, type Invoice, type SupportTicket, type AppNotification, type OrderNote,
 } from '../utils/storage';
 import { downloadInvoice } from '../utils/invoice';
-import { getAuthDebugEntries, hydrateSupabasePortalSession, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { hydrateSupabasePortalSession, isSupabaseAuthEnabled, isOAuthReturnInProgress, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignUp, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchClientOrders,
   fetchClientInvoices,
@@ -80,7 +80,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   const [showPassword, setShowPassword] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(() => isOAuthReturnInProgress());
   const [oauthMessage, setOauthMessage] = useState('Signing in with Google...');
-  const [authDebug, setAuthDebug] = useState<string[]>(() => getAuthDebugEntries());
   const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled() && isOAuthReturnInProgress());
   const oauthLoadingRef = useRef(oauthLoading);
   const authHydratingRef = useRef(authHydrating);
@@ -152,7 +151,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
         }
         setAuth(true);
         setSession({ id: s.id, name: s.name, email: s.email });
-        logAuthDebug('Redirecting to portal');
         setOauthLoading(false);
         setAuthHydrating(false);
         return;
@@ -163,12 +161,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
       setAuthHydrating(false);
     };
     void initAuth();
-  }, []);
-
-  useEffect(() => {
-    if (!isSupabaseAuthEnabled()) return;
-    const unsubscribe = subscribeAuthDebug(setAuthDebug);
-    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -185,7 +177,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     if (!supabase) return;
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (event, authSession) => {
-      setAuthDebug((prev) => [...prev, `${new Date().toLocaleTimeString('en-US', { hour12: false })} Auth listener fired: ${event}`].slice(-60));
       if (event === 'SIGNED_OUT' && (oauthLoadingRef.current || authHydratingRef.current)) {
         return;
       }
@@ -198,7 +189,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
       }
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
 
-      logAuthDebug(`Hydration event accepted: ${event}`);
       setAuthHydrating(true);
       const hydration = authSession
         ? hydrateSupabasePortalSession(authSession)
@@ -206,7 +196,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
       const s = await Promise.race([
         hydration,
         new Promise<null>((resolve) => window.setTimeout(() => {
-          logAuthDebug('Hydration timed out');
           resolve(null);
         }, 9000)),
       ]);
@@ -225,7 +214,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
       }
       setAuth(true);
       setSession({ id: s.id, name: s.name, email: s.email });
-      logAuthDebug('Redirecting to portal');
       setError('');
       setOauthLoading(false);
       setAuthHydrating(false);
@@ -468,16 +456,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
           <div className="w-12 h-12 rounded-full border-2 border-cyan-glow/40 border-t-cyan-glow animate-spin mx-auto mb-4" />
           <h2 className="font-display text-lg font-bold text-white">Preparing your portal</h2>
           <p className="text-xs mt-2" style={{ color: tSec }}>{oauthMessage}</p>
-          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
-            <div className="mt-4 p-3 rounded-xl border text-left" style={{ background: bgEl, borderColor: bd }}>
-              <p className="text-[11px] font-semibold mb-1" style={{ color: tSec }}>OAuth debug timeline (temporary)</p>
-              <div className="max-h-28 overflow-y-auto space-y-1">
-                {authDebug.slice(-8).map((entry, idx) => (
-                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: tMut }}>{entry}</p>
-                ))}
-              </div>
-            </div>
-          )}
         </motion.div>
       </motion.div>
     );
@@ -536,16 +514,6 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
             )}
             <button onClick={onClose} className="w-full py-2 text-sm hover:text-white transition-colors" style={{ color: tSec }}>Back to site</button>
           </div>
-          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
-            <div className="mt-4 p-3 rounded-xl border" style={{ background: bgEl, borderColor: bd }}>
-              <p className="text-[11px] font-semibold mb-1" style={{ color: tSec }}>OAuth debug timeline (temporary)</p>
-              <div className="max-h-28 overflow-y-auto space-y-1">
-                {authDebug.slice(-8).map((entry, idx) => (
-                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: tMut }}>{entry}</p>
-                ))}
-              </div>
-            </div>
-          )}
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgEl, borderColor: '#1e2035' }}>
             <p className="text-[11px]" style={{ color: tMut }}>
               Create a real client account or sign in using your existing Supabase credentials.

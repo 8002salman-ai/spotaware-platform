@@ -14,7 +14,7 @@ import {
   getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
   addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
 } from '../utils/storage';
-import { getAuthDebugEntries, hydrateSupabasePortalSession, isSupabaseAuthEnabled, isOAuthReturnInProgress, logAuthDebug, subscribeAuthDebug, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
+import { hydrateSupabasePortalSession, isSupabaseAuthEnabled, isOAuthReturnInProgress, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchAdminSnapshot,
   updateLeadStatusInSupabase,
@@ -84,7 +84,6 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [localSetupMode, setLocalSetupMode] = useState(false);
   const [localResetMode, setLocalResetMode] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(() => isOAuthReturnInProgress());
-  const [authDebug, setAuthDebug] = useState<string[]>(() => getAuthDebugEntries());
   const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled() && isOAuthReturnInProgress());
   const oauthLoadingRef = useRef(oauthLoading);
   const authHydratingRef = useRef(authHydrating);
@@ -144,7 +143,6 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
         if (session && ['owner', 'admin', 'viewer'].includes(session.role)) {
           setIsAuth(true);
           setCurrentUser({ id: session.id, email: session.email, role: session.role });
-          logAuthDebug('Redirecting to portal');
           setOauthLoading(false);
           setAuthHydrating(false);
         } else if (session) {
@@ -177,12 +175,10 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     if (!isSupabaseAuthEnabled()) return;
-    const unsubscribeDebug = subscribeAuthDebug(setAuthDebug);
     const supabase = getSupabase();
-    if (!supabase) return () => unsubscribeDebug();
+    if (!supabase) return;
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (event, authSession) => {
-      setAuthDebug((prev) => [...prev, `${new Date().toLocaleTimeString('en-US', { hour12: false })} Auth listener fired: ${event}`].slice(-60));
       if (event === 'SIGNED_OUT' && (oauthLoadingRef.current || authHydratingRef.current)) {
         return;
       }
@@ -195,7 +191,6 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
       }
       if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
 
-      logAuthDebug(`Hydration event accepted: ${event}`);
       setAuthHydrating(true);
       const hydration = authSession
         ? hydrateSupabasePortalSession(authSession)
@@ -203,7 +198,6 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
       const session = await Promise.race([
         hydration,
         new Promise<null>((resolve) => window.setTimeout(() => {
-          logAuthDebug('Hydration timed out');
           resolve(null);
         }, 9000)),
       ]);
@@ -222,14 +216,12 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
       }
       setIsAuth(true);
       setCurrentUser({ id: session.id, email: session.email, role: session.role });
-      logAuthDebug('Redirecting to portal');
       setLoginError('');
       setOauthLoading(false);
       setAuthHydrating(false);
     });
 
     return () => {
-      unsubscribeDebug();
       listener.subscription.unsubscribe();
     };
   }, []);
@@ -445,16 +437,6 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
           <div className="w-12 h-12 rounded-full border-2 border-cyan-glow/40 border-t-cyan-glow animate-spin mx-auto mb-4" />
           <h2 className="font-display text-lg font-bold text-white">Preparing admin portal</h2>
           <p className="text-xs mt-2" style={{ color: textSecondary }}>Waiting for session and profile hydration...</p>
-          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
-            <div className="mt-4 p-3 rounded-xl border text-left" style={{ background: bgElevated, borderColor: borderLight }}>
-              <p className="text-[11px] font-semibold mb-1" style={{ color: textSecondary }}>OAuth debug timeline (temporary)</p>
-              <div className="max-h-28 overflow-y-auto space-y-1">
-                {authDebug.slice(-8).map((entry, idx) => (
-                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: textMuted }}>{entry}</p>
-                ))}
-              </div>
-            </div>
-          )}
         </motion.div>
       </motion.div>
     );
@@ -524,16 +506,6 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             )}
             <button onClick={onClose} className="w-full py-2 text-sm transition-colors hover:text-white" style={{ color: textSecondary }}>Cancel</button>
           </div>
-          {isSupabaseAuthEnabled() && authDebug.length > 0 && (
-            <div className="mt-4 p-3 rounded-xl border" style={{ background: bgElevated, borderColor: borderLight }}>
-              <p className="text-[11px] font-semibold mb-1" style={{ color: textSecondary }}>OAuth debug timeline (temporary)</p>
-              <div className="max-h-28 overflow-y-auto space-y-1">
-                {authDebug.slice(-8).map((entry, idx) => (
-                  <p key={`${entry}-${idx}`} className="text-[10px]" style={{ color: textMuted }}>{entry}</p>
-                ))}
-              </div>
-            </div>
-          )}
           <div className="mt-4 p-3 rounded-xl border" style={{ background: bgElevated, borderColor: borderLight }}>
             <p className="text-[11px]" style={{ color: textMuted }}>
               Sign in with your authenticated Supabase admin account.

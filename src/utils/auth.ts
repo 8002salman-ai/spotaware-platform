@@ -24,46 +24,10 @@ type SupabaseAuthSession = {
   };
 };
 
-type AuthDebugListener = (entries: string[]) => void;
-const AUTH_DEBUG_KEY = 'spotaware_auth_debug';
-
-function loadStoredDebugEntries(): string[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const stored = window.sessionStorage.getItem(AUTH_DEBUG_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
-}
-
-function storeDebugEntries(entries: string[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.sessionStorage.setItem(AUTH_DEBUG_KEY, JSON.stringify(entries));
-  } catch {
-    // Ignore storage failures; debug output is best effort.
-  }
-}
-
-const authDebugEntries: string[] = loadStoredDebugEntries();
-const authDebugListeners = new Set<AuthDebugListener>();
-
-function emitAuthDebug(message: string): void {
-  if (typeof window === 'undefined') return;
-  const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
-  authDebugEntries.push(`${timestamp} ${message}`);
-  if (authDebugEntries.length > 60) authDebugEntries.shift();
-  storeDebugEntries(authDebugEntries);
-  const snapshot = [...authDebugEntries];
-  authDebugListeners.forEach((listener) => listener(snapshot));
-}
-
-async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, timeoutMessage: string): Promise<T | null> {
+async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number): Promise<T | null> {
   let timer: number | undefined;
   const timeout = new Promise<null>((resolve) => {
     timer = window.setTimeout(() => {
-      emitAuthDebug(timeoutMessage);
       resolve(null);
     }, timeoutMs);
   });
@@ -73,29 +37,6 @@ async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, timeou
   } finally {
     if (timer) window.clearTimeout(timer);
   }
-}
-
-export function logAuthDebug(message: string): void {
-  emitAuthDebug(message);
-}
-
-export function clearAuthDebugEntries(): void {
-  authDebugEntries.length = 0;
-  storeDebugEntries(authDebugEntries);
-  const snapshot = [...authDebugEntries];
-  authDebugListeners.forEach((listener) => listener(snapshot));
-}
-
-export function getAuthDebugEntries(): string[] {
-  return [...authDebugEntries];
-}
-
-export function subscribeAuthDebug(listener: AuthDebugListener): () => void {
-  authDebugListeners.add(listener);
-  listener([...authDebugEntries]);
-  return () => {
-    authDebugListeners.delete(listener);
-  };
 }
 
 function normalizeRole(role: string | null | undefined): PortalSession['role'] {
@@ -108,11 +49,7 @@ function normalizeRole(role: string | null | undefined): PortalSession['role'] {
 export function isOAuthReturnInProgress(): boolean {
   if (typeof window === 'undefined') return false;
   const url = new URL(window.location.href);
-  const inProgress = Boolean(url.searchParams.get('code') || url.searchParams.get('state'));
-  if (inProgress) {
-    emitAuthDebug('OAuth redirect detected');
-  }
-  return inProgress;
+  return Boolean(url.searchParams.get('code') || url.searchParams.get('state'));
 }
 
 async function ensureProfileViaApi(accessToken: string): Promise<void> {
@@ -120,7 +57,6 @@ async function ensureProfileViaApi(accessToken: string): Promise<void> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 3500);
   try {
-    emitAuthDebug('Profile ensure request started');
     const response = await fetch('/api/ensure-profile', {
       method: 'POST',
       headers: {
@@ -129,16 +65,8 @@ async function ensureProfileViaApi(accessToken: string): Promise<void> {
       },
       signal: controller.signal,
     });
-    const body = await response.json().catch(() => null) as { created?: boolean } | null;
-    if (response.ok && body?.created) {
-      emitAuthDebug('Profile created');
-    } else if (response.ok) {
-      emitAuthDebug('Profile already existed');
-    } else {
-      emitAuthDebug('Profile ensure request failed');
-    }
+    await response.json().catch(() => null);
   } catch {
-    emitAuthDebug('Profile ensure request failed');
     // Best-effort helper for environments where API isn't reachable.
   } finally {
     window.clearTimeout(timer);
@@ -152,7 +80,6 @@ async function exchangeOAuthCodeFromUrl(): Promise<void> {
   const url = new URL(window.location.href);
   const code = url.searchParams.get('code');
   if (!code) return;
-  emitAuthDebug('exchangeCodeForSession started');
 
   const clearOAuthParams = () => {
     url.searchParams.delete('code');
@@ -163,7 +90,6 @@ async function exchangeOAuthCodeFromUrl(): Promise<void> {
   // If session is already set, just clean URL and continue.
   const { data: existing } = await supabase.auth.getSession();
   if (existing.session?.user) {
-    emitAuthDebug('Session loaded (already present before exchange)');
     clearOAuthParams();
     return;
   }
@@ -171,20 +97,16 @@ async function exchangeOAuthCodeFromUrl(): Promise<void> {
   try {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      emitAuthDebug('exchangeCodeForSession completed');
       clearOAuthParams();
       return;
     }
-    emitAuthDebug(`exchangeCodeForSession error: ${error.message}`);
   } catch {
-    emitAuthDebug('exchangeCodeForSession threw exception');
     // Supabase may already be processing this in detectSessionInUrl.
   }
 
   // Mobile browsers can be slower; only clear params once a session exists.
   const { data: afterExchange } = await supabase.auth.getSession();
   if (afterExchange.session?.user) {
-    emitAuthDebug('Session loaded after exchange fallback check');
     clearOAuthParams();
   }
 }
@@ -196,14 +118,11 @@ export function isSupabaseAuthEnabled(): boolean {
 export async function hydrateSupabasePortalSession(authSession: SupabaseAuthSession): Promise<PortalSession | null> {
   const supabase = getSupabase();
   if (!supabase) return null;
-  emitAuthDebug('Hydration started');
-  emitAuthDebug('Session loaded');
   await ensureProfileViaApi(authSession.access_token);
 
   const user = authSession.user;
   let profile: { id: string; email: string | null; name: string | null; role: string | null } | null = null;
   for (let attempt = 0; attempt < 4; attempt++) {
-    emitAuthDebug('Profile fetch started');
     const profileResult = await withTimeout(
       supabase
         .from('profiles')
@@ -211,7 +130,6 @@ export async function hydrateSupabasePortalSession(authSession: SupabaseAuthSess
         .eq('id', user.id)
         .maybeSingle(),
       2500,
-      'Profile fetch timed out',
     );
     const profileRow = profileResult?.data;
     if (profileRow) {
@@ -222,11 +140,8 @@ export async function hydrateSupabasePortalSession(authSession: SupabaseAuthSess
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!profile) {
-    emitAuthDebug('Profile fetch failed: still missing');
     return null;
   }
-  emitAuthDebug('Profile loaded');
-  emitAuthDebug(`Role detected: ${normalizeRole(profile.role)}`);
 
   return {
     id: user.id,
@@ -243,7 +158,6 @@ export async function getSupabasePortalSession(): Promise<PortalSession | null> 
 
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session?.user) {
-    emitAuthDebug(`Session load failed${error ? `: ${error.message}` : ''}`);
     return null;
   }
   return hydrateSupabasePortalSession(data.session as SupabaseAuthSession);
@@ -301,11 +215,8 @@ export async function supabaseSignOut(): Promise<void> {
 export async function supabaseSignInWithGoogle(target: 'admin' | 'client'): Promise<{ error?: string }> {
   const supabase = getSupabase();
   if (!supabase) return { error: 'Supabase not configured.' };
-  clearAuthDebugEntries();
-  emitAuthDebug(`Google OAuth initiated for /${target}`);
 
   const redirectTo = `${window.location.origin}/${target}`;
-  emitAuthDebug(`Redirect triggered to ${redirectTo}`);
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
@@ -317,10 +228,8 @@ export async function supabaseSignInWithGoogle(target: 'admin' | 'client'): Prom
   });
 
   if (error) {
-    emitAuthDebug(`OAuth initiation failed: ${error.message}`);
     return { error: error.message };
   }
-  emitAuthDebug('OAuth redirect requested');
   return {};
 }
 
