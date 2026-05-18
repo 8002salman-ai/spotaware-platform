@@ -85,7 +85,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [localResetMode, setLocalResetMode] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(() => isOAuthReturnInProgress());
   const [authDebug, setAuthDebug] = useState<string[]>(() => getAuthDebugEntries());
-  const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled());
+  const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled() && isOAuthReturnInProgress());
   const oauthLoadingRef = useRef(oauthLoading);
   const authHydratingRef = useRef(authHydrating);
   const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -137,8 +137,9 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const initAuth = async () => {
       if (isSupabaseAuthEnabled()) {
-        setAuthHydrating(true);
-        setOauthLoading(isOAuthReturnInProgress());
+        const oauthReturn = isOAuthReturnInProgress();
+        setAuthHydrating(oauthReturn);
+        setOauthLoading(oauthReturn);
         const session = await waitForSupabasePortalSession();
         if (session && ['owner', 'admin', 'viewer'].includes(session.role)) {
           setIsAuth(true);
@@ -346,7 +347,14 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     if (error) {
       setOauthLoading(false);
       setLoginError(error);
+      return;
     }
+    window.setTimeout(() => {
+      if (!isOAuthReturnInProgress()) {
+        setOauthLoading(false);
+        setLoginError('Google sign-in did not continue. Please click Continue with Google again.');
+      }
+    }, 5000);
   };
 
   const handleForgotPassword = async () => {
@@ -418,7 +426,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   };
 
   // ── LOGIN ──
-  if (!isAuth && (oauthLoading || authHydrating)) {
+  if (!isAuth && authHydrating) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(4,5,10,0.92)', backdropFilter: 'blur(12px)' }}>
         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="w-full max-w-sm rounded-2xl p-8 border text-center" style={{ background: bgCard, borderColor: border }}>

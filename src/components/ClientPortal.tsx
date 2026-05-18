@@ -81,7 +81,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   const [oauthLoading, setOauthLoading] = useState(() => isOAuthReturnInProgress());
   const [oauthMessage, setOauthMessage] = useState('Signing in with Google...');
   const [authDebug, setAuthDebug] = useState<string[]>(() => getAuthDebugEntries());
-  const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled());
+  const [authHydrating, setAuthHydrating] = useState(() => isSupabaseAuthEnabled() && isOAuthReturnInProgress());
   const oauthLoadingRef = useRef(oauthLoading);
   const authHydratingRef = useRef(authHydrating);
   const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -133,8 +133,10 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const initAuth = async () => {
       if (isSupabaseAuthEnabled()) {
-        setAuthHydrating(true);
-        setOauthLoading(isOAuthReturnInProgress());
+        const oauthReturn = isOAuthReturnInProgress();
+        setAuthHydrating(oauthReturn);
+        setOauthLoading(oauthReturn);
+        if (oauthReturn) setOauthMessage('Completing Google login...');
         const s = await waitForSupabasePortalSession();
         if (!s) {
           setOauthLoading(false);
@@ -334,7 +336,15 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
     if (oauthError) {
       setOauthLoading(false);
       setError(oauthError);
+      return;
     }
+    setOauthMessage('Opening Google sign-in...');
+    window.setTimeout(() => {
+      if (!isOAuthReturnInProgress()) {
+        setOauthLoading(false);
+        setError('Google sign-in did not continue. Please tap Continue with Google again.');
+      }
+    }, 5000);
   };
 
   const handleForgotPassword = async () => {
@@ -439,7 +449,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   );
 
   // ── Auth Screen ──
-  if (!auth && (oauthLoading || authHydrating)) {
+  if (!auth && authHydrating) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(4,5,10,0.95)' }}>
         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="w-full max-w-md rounded-2xl p-8 border text-center" style={{ background: bgCard, borderColor: bd }}>

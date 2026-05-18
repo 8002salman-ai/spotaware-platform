@@ -16,8 +16,28 @@ type SignUpInput = {
 };
 
 type AuthDebugListener = (entries: string[]) => void;
+const AUTH_DEBUG_KEY = 'spotaware_auth_debug';
 
-const authDebugEntries: string[] = [];
+function loadStoredDebugEntries(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = window.sessionStorage.getItem(AUTH_DEBUG_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeDebugEntries(entries: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(AUTH_DEBUG_KEY, JSON.stringify(entries));
+  } catch {
+    // Ignore storage failures; debug output is best effort.
+  }
+}
+
+const authDebugEntries: string[] = loadStoredDebugEntries();
 const authDebugListeners = new Set<AuthDebugListener>();
 
 function emitAuthDebug(message: string): void {
@@ -25,6 +45,7 @@ function emitAuthDebug(message: string): void {
   const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
   authDebugEntries.push(`${timestamp} ${message}`);
   if (authDebugEntries.length > 60) authDebugEntries.shift();
+  storeDebugEntries(authDebugEntries);
   const snapshot = [...authDebugEntries];
   authDebugListeners.forEach((listener) => listener(snapshot));
 }
@@ -35,6 +56,7 @@ export function logAuthDebug(message: string): void {
 
 export function clearAuthDebugEntries(): void {
   authDebugEntries.length = 0;
+  storeDebugEntries(authDebugEntries);
   const snapshot = [...authDebugEntries];
   authDebugListeners.forEach((listener) => listener(snapshot));
 }
@@ -256,7 +278,7 @@ export async function supabaseSignInWithGoogle(target: 'admin' | 'client'): Prom
     emitAuthDebug(`OAuth initiation failed: ${error.message}`);
     return { error: error.message };
   }
-  emitAuthDebug('OAuth provider page opened');
+  emitAuthDebug('OAuth redirect requested');
   return {};
 }
 
