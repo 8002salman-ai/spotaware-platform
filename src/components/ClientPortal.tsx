@@ -145,6 +145,36 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
+    if (!isSupabaseAuthEnabled()) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'SIGNED_OUT') {
+        setAuth(false);
+        setSession(null);
+        return;
+      }
+      if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
+
+      const s = await waitForSupabasePortalSession();
+      if (!s) return;
+      if (!canAccessClientPortal(s.role)) {
+        await supabaseSignOut();
+        setError('This account is not allowed to access the client portal.');
+        return;
+      }
+      setAuth(true);
+      setSession({ id: s.id, name: s.name, email: s.email });
+      setError('');
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (session) {
       void loadPortalData(session.id);
       const c = getClients().find(x => x.id === session.id);

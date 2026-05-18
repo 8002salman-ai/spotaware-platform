@@ -30,14 +30,33 @@ async function exchangeOAuthCodeFromUrl(): Promise<void> {
   const code = url.searchParams.get('code');
   if (!code) return;
 
-  try {
-    await supabase.auth.exchangeCodeForSession(code);
-  } catch {
-    // Supabase may already have consumed the code via detectSessionInUrl.
-  } finally {
+  const clearOAuthParams = () => {
     url.searchParams.delete('code');
     url.searchParams.delete('state');
     window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  // If session is already set, just clean URL and continue.
+  const { data: existing } = await supabase.auth.getSession();
+  if (existing.session?.user) {
+    clearOAuthParams();
+    return;
+  }
+
+  try {
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (!error) {
+      clearOAuthParams();
+      return;
+    }
+  } catch {
+    // Supabase may already be processing this in detectSessionInUrl.
+  }
+
+  // Mobile browsers can be slower; only clear params once a session exists.
+  const { data: afterExchange } = await supabase.auth.getSession();
+  if (afterExchange.session?.user) {
+    clearOAuthParams();
   }
 }
 
@@ -68,7 +87,7 @@ export async function getSupabasePortalSession(): Promise<PortalSession | null> 
   };
 }
 
-export async function waitForSupabasePortalSession(retries = 12, delayMs = 300): Promise<PortalSession | null> {
+export async function waitForSupabasePortalSession(retries = 25, delayMs = 400): Promise<PortalSession | null> {
   for (let i = 0; i < retries; i++) {
     const session = await getSupabasePortalSession();
     if (session) return session;
@@ -84,7 +103,7 @@ export async function supabaseSignIn(email: string, password: string): Promise<{
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { session: null, error: error.message };
 
-  const session = await getSupabasePortalSession();
+  const session = await waitForSupabasePortalSession();
   return { session, error: session ? undefined : 'Unable to load profile after login.' };
 }
 
@@ -107,7 +126,7 @@ export async function supabaseSignUp(input: SignUpInput): Promise<{ session: Por
 
   if (error) return { session: null, error: error.message };
 
-  const session = await getSupabasePortalSession();
+  const session = await waitForSupabasePortalSession();
   return { session };
 }
 

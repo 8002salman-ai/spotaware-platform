@@ -155,6 +155,36 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     void initAuth();
   }, []);
 
+  useEffect(() => {
+    if (!isSupabaseAuthEnabled()) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'SIGNED_OUT') {
+        setIsAuth(false);
+        setCurrentUser(null);
+        return;
+      }
+      if (event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED' && event !== 'INITIAL_SESSION') return;
+
+      const session = await waitForSupabasePortalSession();
+      if (!session) return;
+      if (!['owner', 'admin', 'viewer'].includes(session.role)) {
+        await supabaseSignOut();
+        setLoginError('Access denied: admin role required.');
+        return;
+      }
+      setIsAuth(true);
+      setCurrentUser({ id: session.id, email: session.email, role: session.role });
+      setLoginError('');
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
   useEffect(() => { if (isAuth) void reload(); }, [isAuth, tab]);
 
   useEffect(() => {
