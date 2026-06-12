@@ -647,8 +647,6 @@ export interface AdminUser {
   createdAt: Date;
 }
 
-const DEFAULT_USERS: AdminUser[] = [];
-
 export function getAdminUsers(): AdminUser[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.ADMIN_AUTH + '_users');

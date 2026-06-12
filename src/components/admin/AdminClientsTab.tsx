@@ -2,6 +2,7 @@ import {
   type ClientUser, type Order, type Invoice, type InvoiceItem, type SiteSettings,
   updateOrder, addOrderUpdate, createInvoice, updateInvoiceStatus, deleteInvoice, updateInvoice, calcTax, TX_TAX_RATE,
   holdOrder, resumeOrder, markInstallmentPaid, addClientDeadline, markDeadlineReceived, markDeadlineOverdue,
+  adminCreateOrder,
 } from '../../utils/storage';
 import {
   updateOrderInSupabase,
@@ -213,10 +214,8 @@ export default function AdminClientsTab({
                               setShowNewOrder(null); setNewOrd({ service: '', pkg: '', price: 0, notes: '', installments: 1 }); reload();
                             });
                           } else {
-                            import('../../utils/storage').then(({ adminCreateOrder }) => {
-                              adminCreateOrder(c.id, newOrd.service, newOrd.pkg, newOrd.price, newOrd.notes, newOrd.installments > 1 ? newOrd.installments : undefined);
-                              setShowNewOrder(null); setNewOrd({ service: '', pkg: '', price: 0, notes: '', installments: 1 }); void reload();
-                            });
+                            adminCreateOrder(c.id, newOrd.service, newOrd.pkg, newOrd.price, newOrd.notes, newOrd.installments > 1 ? newOrd.installments : undefined);
+                            setShowNewOrder(null); setNewOrd({ service: '', pkg: '', price: 0, notes: '', installments: 1 }); void reload();
                           }
                         }} disabled={!newOrd.service || !newOrd.price} className="flex-1 py-1.5 rounded text-xs font-medium bg-cyan-glow text-midnight disabled:opacity-40">Create Order</button>
                       </div>

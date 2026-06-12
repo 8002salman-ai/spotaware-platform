@@ -1,5 +1,5 @@
 import { type Lead, type Activity } from '../../utils/storage';
-import { type Tab, bgCard, bgElevated, border, borderLight, textSecondary, textMuted, statusColor, fmt } from './types';
+import { type Tab, bgCard, border, borderLight, textSecondary, textMuted, statusColor, fmt } from './types';
 import { isSupabaseAuthEnabled } from '../../utils/auth';
 import { createActivityLogInSupabase } from '../../utils/supabaseData';
 import { exportAllData, clearAllData, logActivity, checkOverdueInstallments, checkOverdueDeadlines } from '../../utils/storage';

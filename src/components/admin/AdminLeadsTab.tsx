@@ -15,11 +15,10 @@ interface Props {
   chats: ChatSession[];
   submissions: ProjectSubmission[];
   clients: ClientUser[];
-  setTab: (tab: 'leads') => void;
   reload: () => void;
 }
 
-export default function AdminLeadsTab({ leads, chats, submissions, clients, setTab, reload }: Props) {
+export default function AdminLeadsTab({ leads, chats, submissions, clients, reload }: Props) {
   const [selClientId, setSelClientId] = useState<string | null>(null);
 
   return (
