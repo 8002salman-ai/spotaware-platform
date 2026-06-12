@@ -1,8 +1,35 @@
 import type { Invoice } from './storage';
 import { getClients } from './storage';
 
-export function generateInvoiceHTML(inv: Invoice): string {
-  const client = getClients().find(c => c.id === inv.clientId);
+export interface InvoiceClientInfo {
+  name?: string;
+  email?: string;
+  company?: string;
+  phone?: string;
+}
+
+export interface InvoiceBusinessInfo {
+  company_name?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  tax_rate?: number;
+}
+
+const DEFAULT_BUSINESS: Required<InvoiceBusinessInfo> = {
+  company_name: 'SpotAware Digital LLC',
+  address: '1234 Innovation Blvd, Suite 500<br>Austin, TX 78701, United States',
+  phone: '+1 (440) 941-8002',
+  email: 'hello@spotaware.dev',
+  website: 'spotaware.dev',
+  tax_rate: 8.25,
+};
+
+export function generateInvoiceHTML(inv: Invoice, clientInfo?: InvoiceClientInfo, businessInfo?: InvoiceBusinessInfo): string {
+  const localClient = getClients().find(c => c.id === inv.clientId);
+  const client: InvoiceClientInfo = clientInfo ?? localClient ?? {};
+  const biz: Required<InvoiceBusinessInfo> = { ...DEFAULT_BUSINESS, ...businessInfo };
 
   const pkgBadge = inv.packageName ? `<div style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:12px;font-weight:600;background:rgba(0,229,255,0.1);color:#00e5ff;border:1px solid rgba(0,229,255,0.2);margin-bottom:16px">📦 Package: ${inv.packageName}</div>` : '';
 
@@ -46,12 +73,11 @@ body{margin:0;padding:40px;background:#08090f;color:#e2e4ed;font-family:Inter,sy
         <div style="font-size:24px;font-weight:800;color:#fff;letter-spacing:-0.5px">Spot<span style="color:#00e5ff">Aware</span>.dev</div>
         <div style="font-size:12px;color:#5a5f7a;margin-top:4px">Premium Digital Studio</div>
         <div style="font-size:12px;color:#6b7094;margin-top:12px;line-height:1.8">
-          SpotAware Digital LLC<br>
-          1234 Innovation Blvd, Suite 500<br>
-          Austin, TX 78701, United States<br>
-          📞 +1 (440) 941-8002<br>
-          📧 hello@spotaware.dev<br>
-          🌐 spotaware.dev
+          ${biz.company_name}<br>
+          ${biz.address}<br>
+          📞 ${biz.phone}<br>
+          📧 ${biz.email}<br>
+          🌐 ${biz.website}
         </div>
       </div>
       <div style="text-align:right">
@@ -153,7 +179,7 @@ body{margin:0;padding:40px;background:#08090f;color:#e2e4ed;font-family:Inter,sy
     <div style="margin-top:20px;padding:20px;background:#131520;border:1px solid #1e2035;border-radius:12px">
       <div style="font-size:11px;text-transform:uppercase;color:#a78bfa;letter-spacing:1px;margin-bottom:12px;font-weight:600">📜 Memorandum of Understanding (MOU)</div>
       <div style="font-size:11px;color:#6b7094;line-height:1.9">
-        This invoice serves as a binding agreement between <strong style="color:#8b90b0">SpotAware Digital LLC</strong> ("Service Provider") and <strong style="color:#8b90b0">${client?.name || 'Client'}</strong>${client?.company ? ` of <strong style="color:#8b90b0">${client.company}</strong>` : ''} ("Client").<br><br>
+        This invoice serves as a binding agreement between <strong style="color:#8b90b0">${biz.company_name}</strong> ("Service Provider") and <strong style="color:#8b90b0">${client?.name || 'Client'}</strong>${client?.company ? ` of <strong style="color:#8b90b0">${client.company}</strong>` : ''} ("Client").<br><br>
         By making payment against this invoice, the Client acknowledges and agrees to all terms, conditions, deliverables, and timelines outlined herein. This document constitutes the complete agreement between both parties regarding the services described above.<br><br>
         Both parties agree to act in good faith and maintain open communication throughout the project duration. Any modifications to the scope of work must be agreed upon in writing by both parties and may result in adjusted pricing and timelines.
       </div>
@@ -161,33 +187,39 @@ body{margin:0;padding:40px;background:#08090f;color:#e2e4ed;font-family:Inter,sy
 
     <!-- FOOTER -->
     <div style="text-align:center;margin-top:32px;padding-top:24px;border-top:1px solid #1e2035">
-      <div style="font-size:14px;color:#5a5f7a">Thank you for choosing <strong style="color:#00e5ff">SpotAware.dev</strong></div>
-      <div style="font-size:11px;color:#3a3f5a;margin-top:6px">SpotAware Digital LLC • 1234 Innovation Blvd, Suite 500 • Austin, TX 78701</div>
-      <div style="font-size:11px;color:#3a3f5a;margin-top:2px">📞 +1 (440) 941-8002 • 📧 hello@spotaware.dev • 🌐 spotaware.dev</div>
+      <div style="font-size:14px;color:#5a5f7a">Thank you for choosing <strong style="color:#00e5ff">${biz.website}</strong></div>
+      <div style="font-size:11px;color:#3a3f5a;margin-top:6px">${biz.company_name} • ${biz.address.replace('<br>', ' • ')}</div>
+      <div style="font-size:11px;color:#3a3f5a;margin-top:2px">📞 ${biz.phone} • 📧 ${biz.email} • 🌐 ${biz.website}</div>
       <div style="font-size:10px;color:#2a2d45;margin-top:10px">This invoice was generated electronically and is valid without signature.</div>
     </div>
   </div>
 </div></body></html>`;
 }
 
-export function downloadInvoice(inv: Invoice) {
-  const html = generateInvoiceHTML(inv);
+export function downloadInvoice(inv: Invoice, clientInfo?: InvoiceClientInfo, businessInfo?: InvoiceBusinessInfo) {
+  const html = generateInvoiceHTML(inv, clientInfo, businessInfo);
   const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); }
 }
 
-export function emailInvoiceToClient(inv: Invoice, emailSettings: { enabled: boolean; serviceId: string; publicKey: string; templateIdBrief: string; templateIdLead: string; adminEmail: string }) {
-  const client = getClients().find(c => c.id === inv.clientId);
-  if (!client || !emailSettings.enabled || !emailSettings.serviceId || !emailSettings.publicKey) return Promise.resolve();
+export function emailInvoiceToClient(
+  inv: Invoice,
+  emailSettings: { enabled: boolean; serviceId: string; publicKey: string; templateIdBrief: string; templateIdLead: string; adminEmail: string },
+  clientInfo?: InvoiceClientInfo,
+) {
+  const localClient = getClients().find(c => c.id === inv.clientId);
+  const client: InvoiceClientInfo = clientInfo ?? localClient ?? {};
+  const toEmail = client.email;
+  if (!toEmail || !emailSettings.enabled || !emailSettings.serviceId || !emailSettings.publicKey) return Promise.resolve();
   const templateId = emailSettings.templateIdBrief || emailSettings.templateIdLead;
   if (!templateId) return Promise.resolve();
   return import('@emailjs/browser').then(ejs =>
     ejs.send(emailSettings.serviceId, templateId, {
-      to_email: client.email,
+      to_email: toEmail,
       from_name: 'SpotAware.dev',
       from_email: emailSettings.adminEmail,
       message: `Invoice ${inv.invoiceNumber} for $${inv.total.toLocaleString()} has been sent.\n\nPackage: ${inv.packageName || 'Custom'}\nDue Date: ${inv.dueDate}\nTax (TX ${inv.taxRate}%): $${inv.taxAmount.toFixed(2)}\n\nLogin to your Client Portal to view and download.`,
-      client_email: client.email,
+      client_email: toEmail,
     }, emailSettings.publicKey)
   ).catch(e => console.log('Email failed:', e));
 }

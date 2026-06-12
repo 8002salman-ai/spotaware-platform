@@ -1,16 +1,37 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import App from './App';
-import AdminPanel from './components/AdminPanel';
-import ClientPortal from './components/ClientPortal';
+
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
+const ClientPortal = lazy(() => import('./components/ClientPortal'));
+
+function PortalLoader() {
+  return (
+    <div className="min-h-screen bg-surface flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-cyan-glow border-t-transparent animate-spin" />
+        <span className="text-sm text-gray-medium">Loading portal…</span>
+      </div>
+    </div>
+  );
+}
 
 function AdminRoute() {
   const navigate = useNavigate();
-  return <AdminPanel onClose={() => navigate('/')} />;
+  return (
+    <Suspense fallback={<PortalLoader />}>
+      <AdminPanel onClose={() => navigate('/')} />
+    </Suspense>
+  );
 }
 
 function ClientRoute() {
   const navigate = useNavigate();
-  return <ClientPortal onClose={() => navigate('/')} />;
+  return (
+    <Suspense fallback={<PortalLoader />}>
+      <ClientPortal onClose={() => navigate('/')} />
+    </Suspense>
+  );
 }
 
 export default function AppRoutes() {

@@ -340,8 +340,62 @@ CREATE TRIGGER update_orders_timestamp BEFORE UPDATE ON public.orders FOR EACH R
 CREATE TRIGGER update_invoices_timestamp BEFORE UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_support_tickets_timestamp BEFORE UPDATE ON public.support_tickets FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+-- 16. ORDER NOTES (pinnable notes on orders, visible to both admin and client)
+CREATE TABLE public.order_notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  by TEXT NOT NULL CHECK (by IN ('admin', 'client')),
+  pinned BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.order_notes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View order notes" ON public.order_notes FOR SELECT USING (
+  EXISTS (SELECT 1 FROM public.orders WHERE id = order_id AND (client_id = auth.uid() OR public.is_admin()))
+);
+CREATE POLICY "Insert order notes" ON public.order_notes FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM public.orders WHERE id = order_id AND (client_id = auth.uid() OR public.is_admin()))
+);
+CREATE POLICY "Admins manage order notes" ON public.order_notes FOR ALL USING (public.is_admin());
+CREATE POLICY "Clients update own notes" ON public.order_notes FOR UPDATE USING (
+  public.is_admin() OR EXISTS (SELECT 1 FROM public.orders WHERE id = order_id AND client_id = auth.uid())
+);
+
+CREATE INDEX idx_order_notes_order ON public.order_notes(order_id);
+
+-- 17. BUSINESS SETTINGS (admin-configurable company info)
+CREATE TABLE public.business_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name TEXT NOT NULL DEFAULT 'SpotAware Digital LLC',
+  tagline TEXT NOT NULL DEFAULT 'Premium Digital Studio',
+  address_line1 TEXT NOT NULL DEFAULT '',
+  address_line2 TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT 'TX',
+  zip TEXT NOT NULL DEFAULT '',
+  country TEXT NOT NULL DEFAULT 'United States',
+  phone TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  website TEXT NOT NULL DEFAULT '',
+  tax_rate DECIMAL(5,2) NOT NULL DEFAULT 8.25,
+  payment_terms TEXT NOT NULL DEFAULT '50% upfront, 50% on delivery',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.business_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admins manage business settings" ON public.business_settings FOR ALL USING (public.is_admin());
+CREATE POLICY "Authenticated view business settings" ON public.business_settings FOR SELECT USING (auth.uid() IS NOT NULL);
+
+INSERT INTO public.business_settings (company_name, tagline, phone, email, website, tax_rate)
+VALUES ('SpotAware Digital LLC', 'Premium Digital Studio', '', 'hello@spotaware.dev', 'spotaware.dev', 8.25)
+ON CONFLICT DO NOTHING;
+
+CREATE TRIGGER update_business_settings_timestamp BEFORE UPDATE ON public.business_settings FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 -- ═══════════════════════════════════════════════════════════════
 -- SEED ADMIN USER (run after first signup)
--- Replace 'YOUR_USER_ID' with your actual Supabase Auth user ID
+-- Replace the email with your actual admin email
 -- ═══════════════════════════════════════════════════════════════
--- UPDATE public.profiles SET role = 'owner' WHERE email = 'ayaz@spotaware.dev';
+-- UPDATE public.profiles SET role = 'owner' WHERE email = 'your-email@example.com';

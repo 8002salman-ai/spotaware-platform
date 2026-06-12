@@ -5,7 +5,7 @@ import { saveNewLead, saveChatSession, getSettings, logActivity, type ChatSessio
 import { isSupabaseAuthEnabled } from '../utils/auth';
 import { createLeadInSupabase, upsertChatSessionInSupabase } from '../utils/supabaseData';
 
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const AI_PROXY_URL = '/api/openrouter';
 
 const SYSTEM_PROMPT = `You are SpotBot, a friendly AI assistant for SpotAware.dev, a premium web development agency.
 
@@ -112,9 +112,16 @@ export default function ChatAgent() {
     try {
       const history = messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
       history.push({ role: 'user', content: content.trim() });
-      const headers: Record<string, string> = { 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'SpotAware.dev' };
-      if (settings.api.useCustomKey && settings.api.openrouterApiKey) headers['Authorization'] = `Bearer ${settings.api.openrouterApiKey}`;
-      const res = await fetch(OPENROUTER_API_URL, { method: 'POST', headers, body: JSON.stringify({ model: settings.api.openrouterModel, messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history], max_tokens: 200, temperature: 0.7 }) });
+      const res = await fetch(AI_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: settings.api.openrouterModel,
+          messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
+          max_tokens: 200,
+          temperature: 0.7,
+        }),
+      });
       if (!res.ok) throw new Error('API failed');
       const data = await res.json();
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: data.choices?.[0]?.message?.content || "I'd love to help! What would you like to know?", timestamp: new Date() }]);

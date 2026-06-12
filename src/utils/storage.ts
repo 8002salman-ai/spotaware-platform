@@ -463,7 +463,7 @@ const DEFAULT_SETTINGS: SiteSettings = {
   },
   whatsapp: {
     enabled: true,
-    phoneNumber: '+14409418002',
+    phoneNumber: '',
     welcomeMessage: 'Hi! I visited SpotAware.dev and I\'m interested in your services.',
   },
   backend: {

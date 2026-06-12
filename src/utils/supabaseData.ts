@@ -16,7 +16,19 @@ import type {
   AppNotification,
   Activity,
   AdminUser,
+  OrderNote,
 } from './storage';
+
+export interface BusinessSettings {
+  id?: string;
+  company_name: string;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  tax_rate: number;
+  updated_at?: string;
+}
 
 type DbOrderRow = {
   id: string;
@@ -286,7 +298,9 @@ export async function updateProfileInSupabase(clientId: string, updates: {
   await supabase.from('profiles').update(updates).eq('id', clientId);
 }
 
-export async function fetchAdminSnapshot(): Promise<{
+const SNAPSHOT_PAGE_SIZE = 200;
+
+export async function fetchAdminSnapshot(page = 0): Promise<{
   leads: Lead[];
   submissions: ProjectSubmission[];
   chats: ChatSession[];
@@ -299,15 +313,18 @@ export async function fetchAdminSnapshot(): Promise<{
   const supabase = getSupabase();
   if (!supabase) return { leads: [], submissions: [], chats: [], adminUsers: [], clients: [], orders: [], invoices: [], tickets: [] };
 
+  const from = page * SNAPSHOT_PAGE_SIZE;
+  const to = from + SNAPSHOT_PAGE_SIZE - 1;
+
   const [leadsRes, subsRes, chatsRes, chatMsgsRes, clientsRes, ordersRes, invoicesRes, ticketsRes, ticketMsgsRes] = await Promise.all([
-    supabase.from('leads').select('*').order('created_at', { ascending: false }),
-    supabase.from('submissions').select('*').order('created_at', { ascending: false }),
-    supabase.from('chat_sessions').select('*').order('last_message_at', { ascending: false }),
+    supabase.from('leads').select('*').order('created_at', { ascending: false }).range(from, to),
+    supabase.from('submissions').select('*').order('created_at', { ascending: false }).range(from, to),
+    supabase.from('chat_sessions').select('*').order('last_message_at', { ascending: false }).range(from, to),
     supabase.from('chat_messages').select('*').order('created_at', { ascending: true }),
-    supabase.from('profiles').select('*').eq('role', 'client').order('created_at', { ascending: false }),
-    supabase.from('orders').select('*, installments(*), client_deadlines(*), order_updates(*)').order('created_at', { ascending: false }),
-    supabase.from('invoices').select('*, invoice_items(*)').order('created_at', { ascending: false }),
-    supabase.from('support_tickets').select('*').order('updated_at', { ascending: false }),
+    supabase.from('profiles').select('*').eq('role', 'client').order('created_at', { ascending: false }).range(from, to),
+    supabase.from('orders').select('*, installments(*), client_deadlines(*), order_updates(*)').order('created_at', { ascending: false }).range(from, to),
+    supabase.from('invoices').select('*, invoice_items(*)').order('created_at', { ascending: false }).range(from, to),
+    supabase.from('support_tickets').select('*').order('updated_at', { ascending: false }).range(from, to),
     supabase.from('support_messages').select('*').order('created_at', { ascending: true }),
   ]);
 
@@ -700,4 +717,88 @@ export async function createAdminUserInSupabase(input: {
   }
 
   return {};
+}
+
+// ── Order Notes ──
+
+export async function fetchOrderNotesInSupabase(orderId: string): Promise<OrderNote[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('order_notes')
+    .select('*')
+    .eq('order_id', orderId)
+    .order('pinned', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error || !data) return [];
+  return data.map((r: Record<string, unknown>) => ({
+    id: r.id as string,
+    orderId: r.order_id as string,
+    content: r.content as string,
+    by: r.by as 'admin' | 'client',
+    pinned: r.pinned as boolean,
+    timestamp: new Date(r.created_at as string),
+  }));
+}
+
+export async function addOrderNoteInSupabase(
+  orderId: string,
+  content: string,
+  by: 'admin' | 'client',
+): Promise<{ error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { error: 'Supabase not configured.' };
+  const { error } = await supabase.from('order_notes').insert({
+    order_id: orderId,
+    content,
+    by,
+    pinned: false,
+  });
+  return error ? { error: error.message } : {};
+}
+
+export async function toggleOrderNotePinInSupabase(
+  noteId: string,
+  pinned: boolean,
+): Promise<{ error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { error: 'Supabase not configured.' };
+  const { error } = await supabase
+    .from('order_notes')
+    .update({ pinned })
+    .eq('id', noteId);
+  return error ? { error: error.message } : {};
+}
+
+// ── Business Settings ──
+
+export async function fetchBusinessSettingsInSupabase(): Promise<BusinessSettings | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('business_settings')
+    .select('*')
+    .limit(1)
+    .single();
+  if (error || !data) return null;
+  return data as BusinessSettings;
+}
+
+export async function updateBusinessSettingsInSupabase(
+  settings: Partial<BusinessSettings>,
+): Promise<{ error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) return { error: 'Supabase not configured.' };
+  const { data: existing } = await supabase
+    .from('business_settings')
+    .select('id')
+    .limit(1)
+    .single();
+  const id = existing?.id;
+  if (!id) return { error: 'No business_settings row found.' };
+  const { error } = await supabase
+    .from('business_settings')
+    .update({ ...settings, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  return error ? { error: error.message } : {};
 }

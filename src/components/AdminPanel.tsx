@@ -2,56 +2,37 @@ import { motion } from 'framer-motion';
 import { useState, useEffect, useRef } from 'react';
 import {
   getLeads, getChatSessions, getProjectSubmissions, getDashboardStats,
-  updateLeadStatus, updateSubmissionStatus, deleteLead, deleteSubmission, deleteChatSession,
   verifyAdminLogin, setAdminAuth, getAdminSession,
-  clearAllData, exportAllData, getSettings, saveSettings,
-  getAdminUsers, createLocalOwner, resetLocalOwner, addAdminUser, updateAdminUser, deleteAdminUser,
-  getClients, getOrders, getInvoices, updateOrder, addOrderUpdate, createInvoice, updateInvoiceStatus, deleteInvoice, updateInvoice, calcTax, TX_TAX_RATE,
-  holdOrder, resumeOrder, markInstallmentPaid, addClientDeadline, markDeadlineReceived, markDeadlineOverdue,
+  getSettings, saveSettings,
+  getAdminUsers, createLocalOwner, resetLocalOwner, addAdminUser, updateAdminUser,
+  getClients, getOrders, getInvoices,
   type Lead, type ChatSession, type ProjectSubmission, type SiteSettings, type AdminUser,
   type ClientUser, type Order, type Invoice, type InvoiceItem,
-  getFullDashboardStats, getActivities, logActivity, type Activity,
-  getTickets, updateTicketStatus, addTicketMessage, type SupportTicket,
-  addNotification, convertLeadToClient, adminCreateOrder, checkOverdueInstallments, checkOverdueDeadlines,
+  getFullDashboardStats, getActivities, type Activity,
+  getTickets, type SupportTicket,
+  checkOverdueInstallments, checkOverdueDeadlines,
+  addNotification,
 } from '../utils/storage';
 import { hydrateSupabasePortalSession, isSupabaseAuthEnabled, isOAuthReturnInProgress, waitForSupabasePortalSession, supabaseSignIn, supabaseSignOut, supabaseSignInWithGoogle, supabaseSendPasswordReset } from '../utils/auth';
 import {
   fetchAdminSnapshot,
-  updateLeadStatusInSupabase,
-  updateSubmissionStatusInSupabase,
-  addSupportMessageInSupabase,
-  updateSupportTicketStatusInSupabase,
-  deleteLeadInSupabase,
-  deleteSubmissionInSupabase,
-  deleteChatSessionInSupabase,
   fetchActivityLogsInSupabase,
-  createActivityLogInSupabase,
   createAdminUserInSupabase,
-  createAdminOrderInSupabase,
-  updateOrderInSupabase,
-  setupOrderInstallmentsInSupabase,
-  markInstallmentPaidInSupabase,
 } from '../utils/supabaseData';
 import { getSupabase } from '../utils/supabase';
-import { downloadInvoice, emailInvoiceToClient } from '../utils/invoice';
 
-type Tab = 'dashboard' | 'leads' | 'submissions' | 'chats' | 'settings' | 'users' | 'clients' | 'activity' | 'support';
+import { type Tab } from './admin/types';
+import { bg, bgCard, bgElevated, bgInput, border, borderLight, textSecondary, textMuted } from './admin/types';
+import AdminDashboardTab from './admin/AdminDashboardTab';
+import AdminLeadsTab from './admin/AdminLeadsTab';
+import AdminSubmissionsTab from './admin/AdminSubmissionsTab';
+import AdminChatsTab from './admin/AdminChatsTab';
+import AdminSettingsTab from './admin/AdminSettingsTab';
+import AdminUsersTab from './admin/AdminUsersTab';
+import AdminClientsTab from './admin/AdminClientsTab';
+import AdminSupportTab from './admin/AdminSupportTab';
+import AdminActivityTab from './admin/AdminActivityTab';
 
-const MODELS = [
-  { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek V3 (Free)', free: true },
-  { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Llama 3.2 3B (Free)', free: true },
-  { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Free)', free: true },
-  { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B (Free)', free: true },
-  { id: 'openrouter/auto', name: 'Auto (Best)', free: false },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', free: false },
-  { id: 'openai/gpt-4o', name: 'GPT-4o', free: false },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', free: false },
-  { id: 'google/gemini-pro-1.5', name: 'Gemini Pro 1.5', free: false },
-];
-
-// Colors
-const bg = 'var(--t-bg,#0f1923)'; const bgCard = 'var(--t-card,#152230)'; const bgElevated = 'var(--t-el,#1a2d3d)'; const bgInput = 'var(--t-in,#1f3344)';
-const border = 'var(--t-bd,#264055)'; const borderLight = 'var(--t-bdl,#1e3548)'; const textSecondary = 'var(--t-sec,#8ab4d0)'; const textMuted = 'var(--t-mut,#4d7a96)';
 
 function buildSupabaseStats(snapshot: { leads: Lead[]; submissions: ProjectSubmission[]; chats: ChatSession[]; clients: ClientUser[]; orders: Order[]; invoices: Invoice[] }) {
   const now = new Date();
@@ -421,12 +402,6 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     if (!editPass) return;
     updateAdminUser(userId, { password: editPass });
     setEditPass(''); setEditingUser(null); setUsers(getAdminUsers());
-  };
-
-  const fmt = (d: Date | string) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const statusColor = (s: string) => {
-    const m: Record<string, string> = { new: 'bg-cyan-glow/15 text-cyan-400 border-cyan-glow/30', contacted: 'bg-amber-500/15 text-amber-400 border-amber-500/30', reviewed: 'bg-blue-500/15 text-blue-400 border-blue-500/30', proposal_sent: 'bg-violet-500/15 text-violet-400 border-violet-500/30', converted: 'bg-green-500/15 text-green-400 border-green-500/30' };
-    return m[s] || 'bg-gray-500/15 text-gray-400 border-gray-500/30';
   };
 
   // ── LOGIN ──

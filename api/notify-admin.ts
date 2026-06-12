@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { handleCors } from './_cors';
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const emailServiceId = process.env.EMAILJS_SERVICE_ID;
@@ -35,6 +36,7 @@ async function sendEmail(toEmail: string, params: Record<string, string>) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (handleCors(req, res)) return;
   if (req.method !== 'POST') return sendError(res, 405, 'Method not allowed');
   if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
     return sendError(res, 500, 'Supabase notification API is not configured.');
