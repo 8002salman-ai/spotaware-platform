@@ -51,8 +51,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       name: fallbackName,
       role: 'client',
     });
-    if (insertError) return sendError(res, 500, insertError.message);
-    created = true;
+    // Ignore unique key violation (23505) — concurrent request already created the profile
+    if (insertError && insertError.code !== '23505') {
+      return sendError(res, 500, insertError.message);
+    }
+    created = !insertError;
   } else if (!existing.email || !existing.name) {
     const { error: updateError } = await adminClient
       .from('profiles')

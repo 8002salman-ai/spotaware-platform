@@ -10,6 +10,9 @@ const emailTemplateId = process.env.EMAILJS_TEMPLATE_ID_ADMIN || process.env.EMA
 const emailPublicKey = process.env.EMAILJS_PUBLIC_KEY;
 const fallbackAdminEmail = process.env.ADMIN_EMAIL;
 
+// Allowlist for action_type — prevents arbitrary strings from polluting the activity log
+const VALID_TYPES = new Set(['order', 'invoice', 'payment', 'support', 'client', 'lead', 'submission', 'system']);
+
 function sendError(res: VercelResponse, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
@@ -45,9 +48,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!token) return sendError(res, 401, 'Missing authorization token.');
 
   const { type, title, message, entityId } = req.body || {};
-  if (!type || !title || !message) {
-    return sendError(res, 400, 'type, title, and message are required.');
-  }
+
+  // Input validation
+  if (!VALID_TYPES.has(type)) return sendError(res, 400, 'Invalid event type.');
+  if (typeof title !== 'string' || title.length === 0 || title.length > 200) return sendError(res, 400, 'title must be 1–200 characters.');
+  if (typeof message !== 'string' || message.length === 0 || message.length > 2000) return sendError(res, 400, 'message must be 1–2000 characters.');
 
   const userClient = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: `Bearer ${token}` } },
@@ -56,6 +61,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const { data: authUser, error: authError } = await userClient.auth.getUser(token);
   if (authError || !authUser.user) return sendError(res, 401, 'Invalid session.');
+
+  // Rate limit: max 10 notifications per authenticated user per minute
+  const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
+  const { count } = await adminClient
+    .from('activity_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('actor_id', authUser.user.id)
+    .gte('created_at', oneMinuteAgo);
+  if ((count ?? 0) >= 10) return sendError(res, 429, 'Rate limit exceeded. Try again in a minute.');
 
   const { data: actorProfile } = await adminClient
     .from('profiles')

@@ -89,6 +89,8 @@ const STORAGE_KEYS = {
 };
 
 // ── Client System ──
+// NOTE: localStorage password storage is for development/demo only.
+// Production deployments MUST enable Supabase auth (settings.backend.useSupabase = true).
 export interface ClientUser {
   id: string;
   name: string;
@@ -107,7 +109,7 @@ export interface PaymentInstallment {
   dueDate: string;
   status: 'pending' | 'paid' | 'overdue';
   paidAt?: Date;
-  label: string; // e.g. "Installment 1 of 4"
+  label: string;
 }
 
 export interface Order {
@@ -123,20 +125,18 @@ export interface Order {
   updates: OrderUpdate[];
   createdAt: Date;
   dueDate?: string;
-  // Payment control
   paymentPlan: 'full' | 'installment';
   installments: PaymentInstallment[];
   totalPaid: number;
   onHold: boolean;
   holdReason?: 'payment_overdue' | 'client_delay' | 'admin_pause';
   holdMessage?: string;
-  // Client delay tracking
   clientDeadlines: ClientDeadline[];
 }
 
 export interface ClientDeadline {
   id: string;
-  item: string; // e.g. "Logo assets", "Content for homepage"
+  item: string;
   dueDate: string;
   status: 'pending' | 'received' | 'overdue';
   receivedAt?: Date;
@@ -178,6 +178,19 @@ export interface InvoiceItem {
 // Texas tax rate
 export const TX_TAX_RATE = 8.25; // 8.25% Texas state + local
 
+// Collision-resistant ID: base-36 timestamp + 4-char random suffix
+function uid(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// Persistent counter for invoice numbers — prevents reuse after deletion
+function getNextInvoiceNumber(): string {
+  const key = 'spotaware_inv_counter';
+  const n = parseInt(localStorage.getItem(key) || '0', 10) + 1;
+  localStorage.setItem(key, String(n));
+  return `INV-${String(n + 1000).padStart(4, '0')}`;
+}
+
 // Client CRUD
 export function getClients(): ClientUser[] {
   try {
@@ -191,7 +204,7 @@ function saveClients(c: ClientUser[]) { localStorage.setItem(STORAGE_KEYS.CLIENT
 export function registerClient(name: string, email: string, password: string, company?: string): ClientUser | null {
   const clients = getClients();
   if (clients.find(c => c.email.toLowerCase() === email.toLowerCase())) return null;
-  const client: ClientUser = { id: `client_${Date.now()}`, name, email, password, company, createdAt: new Date() };
+  const client: ClientUser = { id: uid('client'), name, email, password, company, createdAt: new Date() };
   clients.push(client);
   saveClients(clients);
   saveNewLead(email, name, 'form');
@@ -206,7 +219,6 @@ export function verifyClientLogin(email: string, password: string): ClientUser |
 export function convertLeadToClient(leadId: string, password: string = 'Welcome123'): ClientUser | null {
   const lead = getLeads().find(l => l.id === leadId);
   if (!lead) return null;
-  // Check if already a client
   const existing = getClients().find(c => c.email.toLowerCase() === lead.email.toLowerCase());
   if (existing) return existing;
   const client = registerClient(lead.name || lead.email.split('@')[0], lead.email, password);
@@ -221,11 +233,10 @@ export function convertLeadToClient(leadId: string, password: string = 'Welcome1
 // Admin creates order for a client
 export function adminCreateOrder(clientId: string, service: string, pkg: string, price: number, notes: string, installmentCount?: number): Order {
   const order = createOrder({ clientId, service, package: pkg, price, status: 'pending', notes, adminNotes: '' });
-  // Setup installments if requested
   if (installmentCount && installmentCount > 1) {
     const amt = Math.round(price / installmentCount * 100) / 100;
     const insts = Array.from({ length: installmentCount }, (_, i) => ({
-      id: `inst_${Date.now()}_${i}`,
+      id: uid(`inst${i}`),
       amount: i === installmentCount - 1 ? price - amt * (installmentCount - 1) : amt,
       dueDate: new Date(Date.now() + (i + 1) * 15 * 86400000).toISOString().split('T')[0],
       status: 'pending' as const,
@@ -261,7 +272,7 @@ export function checkOverdueInstallments(): number {
     }
   });
   if (holdCount > 0) {
-    const ords = getOrders(); // re-read since holdOrder modifies
+    const ords = getOrders();
     localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(ords));
   }
   return holdCount;
@@ -312,7 +323,7 @@ export function getClientOrders(clientId: string): Order[] { return getOrders().
 
 export function createOrder(order: Omit<Order, 'id' | 'updates' | 'createdAt' | 'progress' | 'paymentPlan' | 'installments' | 'totalPaid' | 'onHold' | 'clientDeadlines'> & Partial<Pick<Order, 'paymentPlan' | 'installments' | 'totalPaid' | 'onHold' | 'clientDeadlines'>>): Order {
   const orders = getOrders();
-  const o: Order = { paymentPlan: 'full', installments: [], totalPaid: 0, onHold: false, clientDeadlines: [], ...order, id: `ord_${Date.now()}`, progress: 0, updates: [], createdAt: new Date() };
+  const o: Order = { paymentPlan: 'full', installments: [], totalPaid: 0, onHold: false, clientDeadlines: [], ...order, id: uid('ord'), progress: 0, updates: [], createdAt: new Date() };
   orders.unshift(o);
   saveOrders(orders);
   return o;
@@ -332,7 +343,7 @@ export function holdOrder(orderId: string, reason: Order['holdReason'], message:
   o.holdReason = reason;
   o.holdMessage = message;
   o.status = 'on_hold';
-  o.updates.push({ id: `upd_${Date.now()}`, message: `⚠️ Project on hold: ${message}`, by: 'system', timestamp: new Date() });
+  o.updates.push({ id: uid('upd'), message: `⚠️ Project on hold: ${message}`, by: 'system', timestamp: new Date() });
   saveOrders(orders);
 }
 
@@ -344,7 +355,7 @@ export function resumeOrder(orderId: string): void {
   o.holdReason = undefined;
   o.holdMessage = undefined;
   o.status = 'in_progress';
-  o.updates.push({ id: `upd_${Date.now()}`, message: '✅ Project resumed! Work continues.', by: 'system', timestamp: new Date() });
+  o.updates.push({ id: uid('upd'), message: '✅ Project resumed! Work continues.', by: 'system', timestamp: new Date() });
   saveOrders(orders);
 }
 
@@ -354,14 +365,13 @@ export function markInstallmentPaid(orderId: string, installmentId: string): voi
   if (!o) return;
   const inst = o.installments.find(i => i.id === installmentId);
   if (inst) { inst.status = 'paid'; inst.paidAt = new Date(); o.totalPaid = o.installments.filter(i => i.status === 'paid').reduce((a, i) => a + i.amount, 0); }
-  // Auto resume only when all overdue installments are cleared.
   const hasOverdueInstallments = o.installments.some(i => i.status === 'overdue');
   if (o.onHold && o.holdReason === 'payment_overdue' && !hasOverdueInstallments) {
     o.onHold = false;
     o.holdReason = undefined;
     o.holdMessage = undefined;
     o.status = 'in_progress';
-    o.updates.push({ id: `upd_${Date.now()}`, message: '✅ Payment received — project resumed!', by: 'system', timestamp: new Date() });
+    o.updates.push({ id: uid('upd'), message: '✅ Payment received — project resumed!', by: 'system', timestamp: new Date() });
   }
   saveOrders(orders);
 }
@@ -370,8 +380,8 @@ export function addClientDeadline(orderId: string, item: string, dueDate: string
   const orders = getOrders();
   const o = orders.find(x => x.id === orderId);
   if (!o) return;
-  o.clientDeadlines.push({ id: `dl_${Date.now()}`, item, dueDate, status: 'pending' });
-  o.updates.push({ id: `upd_${Date.now()}`, message: `📋 Item requested from you: "${item}" — Due by ${dueDate}`, by: 'system', timestamp: new Date() });
+  o.clientDeadlines.push({ id: uid('dl'), item, dueDate, status: 'pending' });
+  o.updates.push({ id: uid('upd'), message: `📋 Item requested from you: "${item}" — Due by ${dueDate}`, by: 'system', timestamp: new Date() });
   saveOrders(orders);
 }
 
@@ -395,14 +405,14 @@ export function markDeadlineOverdue(orderId: string, deadlineId: string): void {
   o.holdReason = 'client_delay';
   o.holdMessage = `Waiting for: ${dl.item}. Project timeline paused — payment schedule unaffected.`;
   o.status = 'on_hold';
-  o.updates.push({ id: `upd_${Date.now()}`, message: `⏸ Project paused — waiting for "${dl.item}" from you. Note: Your payment schedule remains unchanged.`, by: 'system', timestamp: new Date() });
+  o.updates.push({ id: uid('upd'), message: `⏸ Project paused — waiting for "${dl.item}" from you. Note: Your payment schedule remains unchanged.`, by: 'system', timestamp: new Date() });
   saveOrders(orders);
 }
 
 export function addOrderUpdate(orderId: string, message: string, by: 'admin' | 'client' | 'system'): void {
   const orders = getOrders();
   const o = orders.find(x => x.id === orderId);
-  if (o) { o.updates.push({ id: `upd_${Date.now()}`, message, by, timestamp: new Date() }); saveOrders(orders); }
+  if (o) { o.updates.push({ id: uid('upd'), message, by, timestamp: new Date() }); saveOrders(orders); }
 }
 
 // Invoices CRUD
@@ -415,8 +425,7 @@ export function getClientInvoices(clientId: string): Invoice[] { return getInvoi
 
 export function createInvoice(inv: Omit<Invoice, 'id' | 'invoiceNumber' | 'createdAt'>): Invoice {
   const invoices = getInvoices();
-  const num = `INV-${String(invoices.length + 1001).padStart(4, '0')}`;
-  const i: Invoice = { ...inv, id: `inv_${Date.now()}`, invoiceNumber: num, createdAt: new Date() };
+  const i: Invoice = { ...inv, id: uid('inv'), invoiceNumber: getNextInvoiceNumber(), createdAt: new Date() };
   invoices.unshift(i);
   saveInvoices(invoices);
   return i;
@@ -519,22 +528,16 @@ export function updateWhatsAppSettings(whatsappSettings: Partial<WhatsAppSetting
 // Leads
 export function saveNewLead(email: string, name?: string, source: 'chat' | 'form' = 'chat'): Lead {
   const leads = getLeads();
-  
-  // Check if lead already exists
   const existingLead = leads.find(l => l.email.toLowerCase() === email.toLowerCase());
-  if (existingLead) {
-    return existingLead;
-  }
-  
+  if (existingLead) return existingLead;
   const newLead: Lead = {
-    id: `lead_${Date.now()}`,
+    id: uid('lead'),
     email,
     name,
     timestamp: new Date(),
     source,
     status: 'new',
   };
-  
   leads.unshift(newLead);
   localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(leads));
   return newLead;
@@ -567,13 +570,11 @@ export function deleteLead(leadId: string): void {
 export function saveChatSession(session: ChatSession): void {
   const chats = getChatSessions();
   const existingIndex = chats.findIndex(c => c.id === session.id);
-  
   if (existingIndex >= 0) {
     chats[existingIndex] = session;
   } else {
     chats.unshift(session);
   }
-  
   localStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(chats));
 }
 
@@ -598,20 +599,15 @@ export function deleteChatSession(sessionId: string): void {
 // Project Submissions
 export function saveProjectSubmission(submission: Omit<ProjectSubmission, 'id' | 'timestamp' | 'status'>): ProjectSubmission {
   const submissions = getProjectSubmissions();
-  
   const newSubmission: ProjectSubmission = {
     ...submission,
-    id: `sub_${Date.now()}`,
+    id: uid('sub'),
     timestamp: new Date(),
     status: 'new',
   };
-  
   submissions.unshift(newSubmission);
   localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
-  
-  // Also save as lead
   saveNewLead(submission.email, submission.name, 'form');
-  
   return newSubmission;
 }
 
@@ -647,8 +643,6 @@ export interface AdminUser {
   createdAt: Date;
 }
 
-const DEFAULT_USERS: AdminUser[] = [];
-
 export function getAdminUsers(): AdminUser[] {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.ADMIN_AUTH + '_users');
@@ -671,22 +665,22 @@ export function verifyAdminLogin(email: string, password: string): AdminUser | n
 export function createLocalOwner(email: string, password: string): AdminUser | null {
   const users = getAdminUsers();
   if (users.length > 0) return null;
-  const owner: AdminUser = { id: `owner_${Date.now()}`, email, password, role: 'owner', createdAt: new Date() };
+  const owner: AdminUser = { id: uid('owner'), email, password, role: 'owner', createdAt: new Date() };
   users.push(owner);
   saveAdminUsers(users);
   return owner;
 }
 
 export function resetLocalOwner(email: string, password: string): AdminUser {
-  const owner: AdminUser = { id: `owner_${Date.now()}`, email, password, role: 'owner', createdAt: new Date() };
+  const owner: AdminUser = { id: uid('owner'), email, password, role: 'owner', createdAt: new Date() };
   saveAdminUsers([owner]);
   return owner;
 }
 
 export function addAdminUser(email: string, password: string, role: 'admin' | 'viewer'): AdminUser | null {
   const users = getAdminUsers();
-  if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) return null; // duplicate
-  const newUser: AdminUser = { id: `user_${Date.now()}`, email, password, role, createdAt: new Date() };
+  if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) return null;
+  const newUser: AdminUser = { id: uid('user'), email, password, role, createdAt: new Date() };
   users.push(newUser);
   saveAdminUsers(users);
   return newUser;
@@ -706,7 +700,7 @@ export function updateAdminUser(userId: string, updates: Partial<Pick<AdminUser,
 export function deleteAdminUser(userId: string): boolean {
   const users = getAdminUsers();
   const user = users.find(u => u.id === userId);
-  if (!user || user.role === 'owner') return false; // Can't delete owner
+  if (!user || user.role === 'owner') return false;
   saveAdminUsers(users.filter(u => u.id !== userId));
   return true;
 }
@@ -737,13 +731,10 @@ export function getDashboardStats() {
   const leads = getLeads();
   const submissions = getProjectSubmissions();
   const chats = getChatSessions();
-  
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
   const todayLeads = leads.filter(l => new Date(l.timestamp) >= today).length;
   const todaySubmissions = submissions.filter(s => new Date(s.timestamp) >= today).length;
-  
   return {
     totalLeads: leads.length,
     todayLeads,
@@ -763,17 +754,26 @@ export function clearAllData(): void {
   localStorage.removeItem(STORAGE_KEYS.SUBMISSIONS);
 }
 
-// Export data as JSON
+// Export data as JSON — passwords and API keys are redacted
 export function exportAllData(): string {
+  const clients = getClients().map(({ password: _pw, ...c }) => c);
+  const adminUsers = getAdminUsers().map(({ password: _pw, ...u }) => u);
+  const settings = getSettings();
+  const safeSettings = {
+    ...settings,
+    backend: { ...settings.backend, supabaseAnonKey: '[redacted]', stripePublishableKey: '[redacted]' },
+    api: { ...settings.api, openrouterApiKey: '[redacted]' },
+  };
   return JSON.stringify({
     leads: getLeads(),
     chats: getChatSessions(),
     submissions: getProjectSubmissions(),
-    clients: getClients(),
+    clients,
+    adminUsers,
     orders: getOrders(),
     invoices: getInvoices(),
     activities: getActivities(),
-    settings: getSettings(),
+    settings: safeSettings,
     exportedAt: new Date().toISOString(),
   }, null, 2);
 }
@@ -795,8 +795,8 @@ export function getActivities(): Activity[] {
 
 export function logActivity(type: Activity['type'], action: string, detail: string, entityId?: string, email?: string): void {
   const acts = getActivities();
-  acts.unshift({ id: `act_${Date.now()}`, type, action, detail, entityId, email, timestamp: new Date() });
-  if (acts.length > 200) acts.length = 200; // Keep last 200
+  acts.unshift({ id: uid('act'), type, action, detail, entityId, email, timestamp: new Date() });
+  if (acts.length > 200) acts.length = 200;
   localStorage.setItem('spotaware_activities', JSON.stringify(acts));
 }
 
@@ -830,8 +830,8 @@ export function getClientTickets(clientId: string): SupportTicket[] { return get
 export function createTicket(clientId: string, subject: string, message: string, orderId?: string, priority: SupportTicket['priority'] = 'medium'): SupportTicket {
   const tickets = getTickets();
   const t: SupportTicket = {
-    id: `tkt_${Date.now()}`, clientId, orderId, subject, priority, status: 'open',
-    messages: [{ id: `tm_${Date.now()}`, content: message, by: 'client', timestamp: new Date() }],
+    id: uid('tkt'), clientId, orderId, subject, priority, status: 'open',
+    messages: [{ id: uid('tm'), content: message, by: 'client', timestamp: new Date() }],
     createdAt: new Date(), updatedAt: new Date(),
   };
   tickets.unshift(t); saveTickets(tickets);
@@ -843,7 +843,7 @@ export function addTicketMessage(ticketId: string, content: string, by: 'client'
   const tickets = getTickets();
   const t = tickets.find(x => x.id === ticketId);
   if (!t) return;
-  t.messages.push({ id: `tm_${Date.now()}`, content, by, timestamp: new Date() });
+  t.messages.push({ id: uid('tm'), content, by, timestamp: new Date() });
   t.updatedAt = new Date();
   if (by === 'admin' && t.status === 'open') t.status = 'in_progress';
   saveTickets(tickets);
@@ -876,7 +876,7 @@ export function getNotifications(forClient?: string): AppNotification[] {
 export function addNotification(title: string, message: string, type: AppNotification['type'] = 'info', forClient?: string): void {
   const key = forClient ? `spotaware_notif_${forClient}` : 'spotaware_notif_admin';
   const notifs = getNotifications(forClient);
-  notifs.unshift({ id: `n_${Date.now()}`, title, message, type, read: false, createdAt: new Date() });
+  notifs.unshift({ id: uid('n'), title, message, type, read: false, createdAt: new Date() });
   if (notifs.length > 50) notifs.length = 50;
   localStorage.setItem(key, JSON.stringify(notifs));
 }
@@ -911,7 +911,7 @@ export function getOrderNotes(orderId: string): OrderNote[] {
 
 export function addOrderNote(orderId: string, content: string, by: 'admin' | 'client', pinned: boolean = false): void {
   const notes = getOrderNotes(orderId);
-  notes.unshift({ id: `note_${Date.now()}`, orderId, content, by, pinned, timestamp: new Date() });
+  notes.unshift({ id: uid('note'), orderId, content, by, pinned, timestamp: new Date() });
   localStorage.setItem(`spotaware_notes_${orderId}`, JSON.stringify(notes));
 }
 
@@ -940,7 +940,10 @@ export function getFullDashboardStats() {
   const pendingInvoices = invoices.filter(i => i.status === 'sent' || i.status === 'overdue');
   const overdueInvoices = invoices.filter(i => i.status === 'overdue');
   const totalRevenue = paidInvoices.reduce((a, i) => a + i.total, 0);
-  const monthRevenue = paidInvoices.filter(i => new Date(i.paidAt || i.createdAt) >= month).reduce((a, i) => a + i.total, 0);
+  const monthRevenue = paidInvoices.filter(i => {
+    const d = i.paidAt ? new Date(i.paidAt) : new Date(i.createdAt);
+    return d >= month;
+  }).reduce((a, i) => a + i.total, 0);
   const conversionRate = leads.length > 0 ? Math.round(leads.filter(l => l.status === 'converted').length / leads.length * 100) : 0;
 
   return {

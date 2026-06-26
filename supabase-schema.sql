@@ -303,9 +303,9 @@ CREATE POLICY "Clients view own notifications" ON public.notifications FOR SELEC
 CREATE POLICY "Clients update own notifications" ON public.notifications FOR UPDATE USING (client_id = auth.uid() OR public.is_admin());
 CREATE POLICY "Admins manage notifications" ON public.notifications FOR ALL USING (public.is_admin());
 
--- ACTIVITY LOGS (admin-only)
+-- ACTIVITY LOGS: admin-read, admin-insert only (clients use /api/notify-admin which inserts via service role)
 CREATE POLICY "Admins view activity logs" ON public.activity_logs FOR SELECT USING (public.is_admin());
-CREATE POLICY "Authenticated insert activity logs" ON public.activity_logs FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Admins insert activity logs" ON public.activity_logs FOR INSERT WITH CHECK (public.is_admin());
 
 -- ═══════════════════════════════════════════════════════════════
 -- INDEXES
@@ -321,6 +321,7 @@ CREATE INDEX idx_chat_messages_session ON public.chat_messages(session_id);
 CREATE INDEX idx_support_tickets_client ON public.support_tickets(client_id);
 CREATE INDEX idx_support_messages_ticket ON public.support_messages(ticket_id);
 CREATE INDEX idx_notifications_client ON public.notifications(client_id);
+CREATE INDEX idx_activity_logs_actor ON public.activity_logs(actor_id);
 CREATE INDEX idx_activity_logs_created ON public.activity_logs(created_at DESC);
 
 -- ═══════════════════════════════════════════════════════════════
