@@ -552,6 +552,11 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             <span className="mr-1.5">{t.icon}</span>{t.label}
           </button>
         ))}
+        {/* Enterprise Financial Engine — external link */}
+        <a href="/financial" className="px-4 py-3 text-[13px] font-medium border-b-2 border-transparent whitespace-nowrap transition-colors hover:text-white flex items-center gap-1.5"
+          style={{ color: '#00e5ff', borderBottomColor: '#00e5ff40' }}>
+          <span>💹</span>Financial Engine
+        </a>
       </div>
 
       {/* Content */}
