@@ -85,6 +85,10 @@ export interface MarketplaceSettlement {
   marketplace: string;
   saleRef?: string;
   amount: number;
+  // Inventory link — set when a sale is tied to a specific inventory item
+  inventoryItemId?: string;
+  quantity?: number;    // Units sold; required when inventoryItemId is set
+  cog?: number;         // Cost of goods: qty × unitCost (auto) or manual
   stage: MarketplaceSettlementStage;
   stageHistory: MarketplaceSettlementHistoryEntry[];
   createdAt: string;
@@ -117,6 +121,66 @@ export interface LedgerEntry {
   referenceId?: string;
   date: string;
   createdAt: string; // immutable — never updated after creation
+}
+
+// ── Inventory Management ───────────────────────────────────────────────────────
+// Investor is the Inventory Owner. Capital → Inventory Purchase → Asset → Sale → Recovery + Profit.
+// Unsold inventory is NOT withdrawable. Only sold inventory contributes to investor recovery.
+
+export interface InventoryItem {
+  id: string;
+  companyId: string;
+  investorId: string;         // Inventory owner (e.g. Salman Bashir)
+  name: string;
+  sku: string;
+  description?: string;
+  unitCost: number;
+  currency: string;
+  purchasedQty: number;
+  soldQty: number;
+  currentQty: number;         // purchasedQty - soldQty (kept in sync on every mutation)
+  capitalTransactionId?: string; // Optional link to the CapitalTransaction for the purchase
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type StockMovementType = 'PURCHASE_IN' | 'SALE_OUT' | 'ADJUSTMENT' | 'RETURN_IN';
+
+export interface StockMovement {
+  id: string;
+  inventoryItemId: string;
+  companyId: string;
+  type: StockMovementType;
+  qty: number;          // Always positive; direction is determined by type
+  unitCost: number;
+  totalValue: number;   // qty × unitCost
+  saleId?: string;      // Reference to MarketplaceSettlement.id (set for SALE_OUT)
+  note?: string;
+  date: string;
+  createdAt: string;
+  isReconciliation: boolean; // true when auto-created by the reconciliation migration
+}
+
+// ── Reconciliation Report ─────────────────────────────────────────────────────
+
+export interface InventorySnapshot {
+  id: string;
+  name: string;
+  sku: string;
+  soldQty: number;
+  currentQty: number;
+  inventoryValue: number;
+}
+
+export interface ReconciliationReport {
+  historicalSalesScanned: number;
+  inventoryLinkedSalesFound: number;
+  stockMovementsCreated: number;
+  duplicateMovementsSkipped: number;
+  productsUpdated: number;
+  inventoryBefore: InventorySnapshot[];
+  inventoryAfter: InventorySnapshot[];
+  remainingIssues: string[];
 }
 
 // ── Financial Timeline ─────────────────────────────────────────────────────────
@@ -152,7 +216,7 @@ export interface InvestorWallet {
   capitalInvested: number;
   capitalReturned: number;
   remainingCapital: number;
-  inventoryValue: number;
+  inventoryValue: number;       // Unsold inventory value — NOT withdrawable until sold
   recoveredInventory: number;
   marketplaceFundsAvailable: number;
   marketplaceFundsPending: number;
@@ -179,6 +243,21 @@ export interface ExchangeRate {
   date: string;
 }
 
+// ── Financial Summary (computed, used by Dashboard) ───────────────────────────
+
+export interface FinancialSummary {
+  totalCapitalInvested: number;
+  totalCapitalReturned: number;
+  totalOutstandingCapital: number;
+  totalProfitPaid: number;
+  totalMarketplaceBalance: number;
+  totalMarketplacePending: number;
+  companyCount: number;
+  investorCount: number;
+  activeSettlements: number;
+  wallets: CompanyWallet[];
+}
+
 // ── Store Shape ───────────────────────────────────────────────────────────────
 
 export interface FinancialData {
@@ -188,5 +267,8 @@ export interface FinancialData {
   profitWithdrawals: ProfitWithdrawal[];
   marketplaceSettlements: MarketplaceSettlement[];
   ledgerEntries: LedgerEntry[];
-  _migrationH: boolean; // true after Migration H has been applied
+  inventoryItems: InventoryItem[];
+  stockMovements: StockMovement[];
+  _migrationH: boolean;                       // true after Migration H (withdrawalType backfill)
+  _migrationInventoryReconciliation: boolean; // true after first inventory reconciliation pass
 }

@@ -13,6 +13,7 @@ const InvestorDashboard      = lazy(() => import('./InvestorDashboard'));
 const CompanyWallet          = lazy(() => import('./CompanyWallet'));
 const FinancialDashboard     = lazy(() => import('./FinancialDashboard'));
 const FinancialReports       = lazy(() => import('./FinancialReports'));
+const InventoryManagement    = lazy(() => import('./InventoryManagement'));
 
 const bg = 'var(--t-bg,#0f1923)';
 const bgCard = 'var(--t-card,#152230)';
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { path: '/financial/capital', label: 'Capital Ledger', icon: '💰' },
   { path: '/financial/profit', label: 'Profit Ledger', icon: '📈' },
   { path: '/financial/withdrawals', label: 'Withdrawal Engine', icon: '💸' },
+  { path: '/financial/inventory', label: 'Inventory', icon: '📦' },
   { path: '/financial/marketplace', label: 'Marketplace Payouts', icon: '🛒' },
   { path: '/financial/investor-dashboard', label: 'Investor Dashboard', icon: '👤' },
   { path: '/financial/company-wallet', label: 'Company Wallets', icon: '🏦' },
@@ -151,7 +153,6 @@ export default function FinancialEngine() {
 
         <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
           {NAV_ITEMS.map(item => {
-            const isActive = item.exact ? location.pathname === item.path : location.pathname.startsWith(item.path) && !location.pathname.startsWith('/financial/') === (item.path === '/financial');
             const active = activeItem?.path === item.path;
             return (
               <button key={item.path}
@@ -194,6 +195,7 @@ export default function FinancialEngine() {
               <Route path="/capital" element={<CapitalLedger />} />
               <Route path="/profit" element={<ProfitLedger />} />
               <Route path="/withdrawals" element={<WithdrawalEngine />} />
+              <Route path="/inventory" element={<InventoryManagement />} />
               <Route path="/marketplace" element={<MarketplacePayoutEngine />} />
               <Route path="/investor-dashboard" element={<InvestorDashboard />} />
               <Route path="/company-wallet" element={<CompanyWallet />} />

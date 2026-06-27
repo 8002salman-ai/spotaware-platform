@@ -13,6 +13,10 @@ import type {
   MarketplaceSettlementStage,
   LedgerEntry,
   LedgerEntryType,
+  InventoryItem,
+  StockMovement,
+  ReconciliationReport,
+  InventorySnapshot,
 } from '../types/financial';
 
 const STORAGE_KEY = 'spotaware_financial';
@@ -28,6 +32,55 @@ function applyMigrationH(data: FinancialData): FinancialData {
   return { ...data, profitWithdrawals: patched, _migrationH: true };
 }
 
+// ── Inventory Reconciliation Migration ───────────────────────────────────────
+// Scans all MarketplaceSettlements that have inventoryItemId set.
+// For any settlement missing a SALE_OUT stock movement, creates one and updates inventory.
+// Idempotent — safe to run on every load. Returns same reference if nothing changed.
+function applyInventoryReconciliation(data: FinancialData): FinancialData {
+  const pending = data.marketplaceSettlements.filter(
+    s => s.inventoryItemId && !data.stockMovements.find(m => m.saleId === s.id && m.type === 'SALE_OUT')
+  );
+
+  if (pending.length === 0) {
+    return data._migrationInventoryReconciliation ? data : { ...data, _migrationInventoryReconciliation: true };
+  }
+
+  const mutatedItems = data.inventoryItems.map(i => ({ ...i }));
+  const mutatedMovements = [...data.stockMovements];
+  const now = new Date().toISOString();
+
+  for (const sale of pending) {
+    const item = mutatedItems.find(i => i.id === sale.inventoryItemId);
+    if (!item) continue;
+
+    const qty = sale.quantity ?? 1;
+    mutatedMovements.push({
+      id: `smv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      inventoryItemId: item.id,
+      companyId: sale.companyId,
+      type: 'SALE_OUT',
+      qty,
+      unitCost: item.unitCost,
+      totalValue: qty * item.unitCost,
+      saleId: sale.id,
+      note: 'Auto-reconciled on load',
+      date: sale.createdAt.split('T')[0],
+      createdAt: now,
+      isReconciliation: true,
+    });
+    item.soldQty += qty;
+    item.currentQty = Math.max(0, item.purchasedQty - item.soldQty);
+    item.updatedAt = now;
+  }
+
+  return {
+    ...data,
+    inventoryItems: mutatedItems,
+    stockMovements: mutatedMovements,
+    _migrationInventoryReconciliation: true,
+  };
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 const EMPTY: FinancialData = {
@@ -37,17 +90,24 @@ const EMPTY: FinancialData = {
   profitWithdrawals: [],
   marketplaceSettlements: [],
   ledgerEntries: [],
+  inventoryItems: [],
+  stockMovements: [],
   _migrationH: false,
+  _migrationInventoryReconciliation: false,
 };
 
 export function getFinancialData(): FinancialData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...EMPTY, _migrationH: true };
+    if (!raw) return { ...EMPTY, _migrationH: true, _migrationInventoryReconciliation: true };
     const parsed = JSON.parse(raw) as FinancialData;
-    return applyMigrationH({ ...EMPTY, ...parsed });
+    const migH = applyMigrationH({ ...EMPTY, ...parsed });
+    const result = applyInventoryReconciliation(migH);
+    // Persist if any migration changed state (reference inequality = something mutated)
+    if (result !== migH) save(result);
+    return result;
   } catch {
-    return { ...EMPTY, _migrationH: true };
+    return { ...EMPTY, _migrationH: true, _migrationInventoryReconciliation: true };
   }
 }
 
@@ -201,11 +261,51 @@ export function addMarketplaceSettlement(
     createdAt: now,
     updatedAt: now,
   };
+
   const ledger = buildSettlementLedgerEntry(rec);
+
+  // Inventory deduction — atomic with settlement creation
+  let updatedInventoryItems = data.inventoryItems;
+  let updatedStockMovements = data.stockMovements;
+
+  if (input.inventoryItemId) {
+    const item = data.inventoryItems.find(i => i.id === input.inventoryItemId);
+    if (item) {
+      const qty = input.quantity ?? 1;
+      const movement: StockMovement = {
+        id: `smv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        inventoryItemId: item.id,
+        companyId: rec.companyId,
+        type: 'SALE_OUT',
+        qty,
+        unitCost: item.unitCost,
+        totalValue: qty * item.unitCost,
+        saleId: rec.id,
+        note: `Sale: ${rec.marketplace}${rec.saleRef ? ` (${rec.saleRef})` : ''}`,
+        date: now.split('T')[0],
+        createdAt: now,
+        isReconciliation: false,
+      };
+      updatedStockMovements = [...data.stockMovements, movement];
+      updatedInventoryItems = data.inventoryItems.map(i =>
+        i.id === item.id
+          ? {
+              ...i,
+              soldQty: i.soldQty + qty,
+              currentQty: Math.max(0, i.purchasedQty - i.soldQty - qty),
+              updatedAt: now,
+            }
+          : i
+      );
+    }
+  }
+
   save({
     ...data,
     marketplaceSettlements: [...data.marketplaceSettlements, rec],
     ledgerEntries: [...data.ledgerEntries, ledger],
+    inventoryItems: updatedInventoryItems,
+    stockMovements: updatedStockMovements,
   });
   return rec;
 }
@@ -239,10 +339,34 @@ export function advanceSettlementStage(
 
 export function deleteSettlement(id: string): void {
   const data = getFinancialData();
+  const settlement = data.marketplaceSettlements.find(s => s.id === id);
+
+  // Reverse inventory deduction if the settlement was linked
+  let inventoryItems = data.inventoryItems;
+  if (settlement?.inventoryItemId) {
+    const movement = data.stockMovements.find(m => m.saleId === id && m.type === 'SALE_OUT');
+    if (movement) {
+      const qty = movement.qty;
+      const now = new Date().toISOString();
+      inventoryItems = data.inventoryItems.map(i =>
+        i.id === settlement.inventoryItemId
+          ? {
+              ...i,
+              soldQty: Math.max(0, i.soldQty - qty),
+              currentQty: i.currentQty + qty,
+              updatedAt: now,
+            }
+          : i
+      );
+    }
+  }
+
   save({
     ...data,
     marketplaceSettlements: data.marketplaceSettlements.filter(s => s.id !== id),
     ledgerEntries: data.ledgerEntries.filter(e => e.referenceId !== id),
+    stockMovements: data.stockMovements.filter(m => m.saleId !== id),
+    inventoryItems,
   });
 }
 
@@ -263,6 +387,167 @@ export function addManualLedgerEntry(
   };
   save({ ...data, ledgerEntries: [...data.ledgerEntries, rec] });
   return rec;
+}
+
+// ── Inventory Items CRUD ──────────────────────────────────────────────────────
+
+export function getInventoryItems(): InventoryItem[] {
+  return getFinancialData().inventoryItems;
+}
+
+export function addInventoryItem(
+  input: Omit<InventoryItem, 'id' | 'createdAt' | 'updatedAt' | 'soldQty' | 'currentQty'>
+): InventoryItem {
+  const data = getFinancialData();
+  const now = new Date().toISOString();
+  const rec: InventoryItem = {
+    ...input,
+    id: `itm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    soldQty: 0,
+    currentQty: input.purchasedQty,
+    createdAt: now,
+    updatedAt: now,
+  };
+  save({ ...data, inventoryItems: [...data.inventoryItems, rec] });
+  return rec;
+}
+
+export function updateInventoryItem(id: string, patch: Partial<Omit<InventoryItem, 'id' | 'createdAt'>>): void {
+  const data = getFinancialData();
+  const now = new Date().toISOString();
+  save({
+    ...data,
+    inventoryItems: data.inventoryItems.map(i => {
+      if (i.id !== id) return i;
+      const updated = { ...i, ...patch, updatedAt: now };
+      // Recompute currentQty if purchasedQty or soldQty changed
+      updated.currentQty = Math.max(0, updated.purchasedQty - updated.soldQty);
+      return updated;
+    }),
+  });
+}
+
+export function deleteInventoryItem(id: string): boolean {
+  const data = getFinancialData();
+  const hasMovements = data.stockMovements.some(m => m.inventoryItemId === id);
+  const hasLinkedSales = data.marketplaceSettlements.some(s => s.inventoryItemId === id);
+  if (hasMovements || hasLinkedSales) return false;
+  save({ ...data, inventoryItems: data.inventoryItems.filter(i => i.id !== id) });
+  return true;
+}
+
+// ── Stock Movements ───────────────────────────────────────────────────────────
+
+export function getStockMovements(inventoryItemId?: string): StockMovement[] {
+  const data = getFinancialData();
+  return inventoryItemId
+    ? data.stockMovements.filter(m => m.inventoryItemId === inventoryItemId)
+    : data.stockMovements;
+}
+
+// ── Inventory Reconciliation (explicit, with report) ─────────────────────────
+// Reads raw localStorage to capture the true "before" state, then reconciles and saves.
+// Returns a full ReconciliationReport. Safe to call multiple times — idempotent.
+export function runInventoryReconciliation(): ReconciliationReport {
+  let raw: FinancialData;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    raw = stored ? { ...EMPTY, ...(JSON.parse(stored) as FinancialData) } : { ...EMPTY };
+  } catch {
+    raw = { ...EMPTY };
+  }
+
+  // Snapshot inventory BEFORE reconciliation
+  const inventoryBefore: InventorySnapshot[] = raw.inventoryItems.map(i => ({
+    id: i.id,
+    name: i.name,
+    sku: i.sku,
+    soldQty: i.soldQty,
+    currentQty: i.currentQty,
+    inventoryValue: i.currentQty * i.unitCost,
+  }));
+
+  const linkedSales = raw.marketplaceSettlements.filter(s => s.inventoryItemId);
+  let stockMovementsCreated = 0;
+  let duplicateMovementsSkipped = 0;
+  let productsUpdated = 0;
+  const remainingIssues: string[] = [];
+
+  const mutatedItems = raw.inventoryItems.map(i => ({ ...i }));
+  const mutatedMovements = [...raw.stockMovements];
+  const now = new Date().toISOString();
+
+  for (const sale of linkedSales) {
+    const item = mutatedItems.find(i => i.id === sale.inventoryItemId);
+    if (!item) {
+      remainingIssues.push(`Sale "${sale.saleRef ?? sale.id}" — linked inventory item "${sale.inventoryItemId ?? ''}" not found`);
+      continue;
+    }
+
+    const existing = mutatedMovements.find(m => m.saleId === sale.id && m.type === 'SALE_OUT');
+    if (existing) {
+      duplicateMovementsSkipped++;
+      continue;
+    }
+
+    const qty = sale.quantity ?? 1;
+    mutatedMovements.push({
+      id: `smv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      inventoryItemId: item.id,
+      companyId: sale.companyId,
+      type: 'SALE_OUT',
+      qty,
+      unitCost: item.unitCost,
+      totalValue: qty * item.unitCost,
+      saleId: sale.id,
+      note: 'Reconciliation: auto-created from linked sale',
+      date: sale.createdAt.split('T')[0],
+      createdAt: now,
+      isReconciliation: true,
+    });
+
+    item.soldQty += qty;
+    item.currentQty = Math.max(0, item.purchasedQty - item.soldQty);
+    item.updatedAt = now;
+    stockMovementsCreated++;
+    productsUpdated++;
+  }
+
+  // Also validate items that have more sold than purchased
+  for (const item of mutatedItems) {
+    if (item.soldQty > item.purchasedQty) {
+      remainingIssues.push(`SKU "${item.sku}" — soldQty (${item.soldQty}) exceeds purchasedQty (${item.purchasedQty})`);
+    }
+  }
+
+  const inventoryAfter: InventorySnapshot[] = mutatedItems.map(i => ({
+    id: i.id,
+    name: i.name,
+    sku: i.sku,
+    soldQty: i.soldQty,
+    currentQty: i.currentQty,
+    inventoryValue: i.currentQty * i.unitCost,
+  }));
+
+  // Save the reconciled data (also apply Migration H for safety)
+  const updated: FinancialData = applyMigrationH({
+    ...raw,
+    inventoryItems: mutatedItems,
+    stockMovements: mutatedMovements,
+    _migrationInventoryReconciliation: true,
+  });
+  save(updated);
+
+  return {
+    historicalSalesScanned: raw.marketplaceSettlements.length,
+    inventoryLinkedSalesFound: linkedSales.length,
+    stockMovementsCreated,
+    duplicateMovementsSkipped,
+    productsUpdated,
+    inventoryBefore,
+    inventoryAfter,
+    remainingIssues,
+  };
 }
 
 // ── Automatic Ledger Posting Helpers ─────────────────────────────────────────
