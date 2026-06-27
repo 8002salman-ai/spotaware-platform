@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getFinancialData } from '../../store/financialStore';
 import { getFinancialSummary, getLedgerView, fmt, fmtDate } from '../../utils/financial/calculations';
-import type { FinancialSummary, LedgerEntry, LedgerEntryType } from '../../types/financial';
+import type { FinancialSummary, CompanyWallet, LedgerEntry, LedgerEntryType } from '../../types/financial';
 
 const bgCard = 'var(--t-card,#152230)';
 const bgElevated = 'var(--t-el,#1a2d3d)';
@@ -122,7 +122,7 @@ export default function FinancialDashboard() {
             <div className="rounded-xl border p-5 space-y-3" style={{ background: bgCard, borderColor: border }}>
               <h2 className="font-semibold text-white">Company Wallets</h2>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {summary.wallets.map(w => (
+                {summary.wallets.map((w: CompanyWallet) => (
                   <button key={w.companyId} onClick={() => { window.location.href = '/financial/company-wallet'; }}
                     className="rounded-xl border p-4 text-left space-y-2 hover:bg-white/[0.02] transition-colors"
                     style={{ background: bgElevated, borderColor: borderLight }}>

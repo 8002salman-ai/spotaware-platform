@@ -187,7 +187,7 @@ export default function FinancialReports() {
             <p className="text-sm py-6 text-center" style={{ color: textMuted }}>No data found for the selected filters.</p>
           )}
 
-          {rd.type === 'investor_statement' && (rd.rows as unknown as ReturnType<typeof getInvestorWallet>[]).map((row: ReturnType<typeof getInvestorWallet> & { investor: string; timeline: { id: string; type: LedgerEntryType; amount: number; description: string; date: string }[] }, i) => (
+          {rd.type === 'investor_statement' && (rd.rows as unknown as Array<ReturnType<typeof getInvestorWallet> & { investor: string; timeline: { id: string; type: LedgerEntryType; amount: number; description: string; date: string }[] }>).map((row, i) => (
             <div key={i} className="rounded-xl border p-4 space-y-3" style={{ background: bgElevated, borderColor: borderLight }}>
               <h4 className="font-semibold text-white">{(row as unknown as { investor: string }).investor}</h4>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">

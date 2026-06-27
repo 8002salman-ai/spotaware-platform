@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getFinancialData, getInvestors, getCompanies } from '../../store/financialStore';
 import { getInvestorWallet, getCompanyWallet, buildTimeline, fmt, fmtDate } from '../../utils/financial/calculations';

@@ -12,6 +12,7 @@ import type {
   MarketplaceSettlement,
   CompanyWallet,
   InvestorWallet,
+  FinancialSummary,
   FinancialTimelineEvent,
   LedgerEntry,
 } from '../../types/financial';
@@ -63,9 +64,10 @@ export function getInvestorWallet(data: FinancialData, investorId: string): Inve
   const capitalReturned = sum(txs.filter(t => t.type === 'capital_return'));
   const remainingCapital = Math.max(0, capitalInvested - capitalReturned);
 
-  const inventoryPurchased = sum(txs.filter(t => t.type === 'inventory_purchase'));
-  const inventoryAdjusted = sum(txs.filter(t => t.type === 'inventory_adjustment'));
-  const inventoryValue = Math.max(0, inventoryPurchased + inventoryAdjusted);
+  // Inventory value = unsold stock only — an asset until sold, never withdrawable until recovered
+  const inventoryValue = data.inventoryItems
+    .filter(i => i.investorId === investorId && i.currentQty > 0)
+    .reduce((acc, i) => acc + i.currentQty * i.unitCost, 0);
   const recoveredInventory = capitalReturned;
 
   // Per-company settlements for this investor's companies
@@ -199,19 +201,6 @@ export function getLedgerView(data: FinancialData, companyId?: string, investorI
 }
 
 // ── Financial Dashboard Summary ───────────────────────────────────────────────
-
-export interface FinancialSummary {
-  totalCapitalInvested: number;
-  totalCapitalReturned: number;
-  totalOutstandingCapital: number;
-  totalProfitPaid: number;
-  totalMarketplaceBalance: number;
-  totalMarketplacePending: number;
-  companyCount: number;
-  investorCount: number;
-  activeSettlements: number;
-  wallets: CompanyWallet[];
-}
 
 export function getFinancialSummary(data: FinancialData): FinancialSummary {
   const wallets = data.companies.map(c => getCompanyWallet(data, c.id));
