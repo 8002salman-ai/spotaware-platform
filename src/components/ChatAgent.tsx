@@ -86,7 +86,7 @@ export default function ChatAgent() {
 
   const sendEmailNotification = async (clientEmail: string) => {
     if (!settings.email.enabled || !settings.email.serviceId || !settings.email.publicKey || !settings.email.templateIdLead) return;
-    try { await emailjs.send(settings.email.serviceId, settings.email.templateIdLead, { to_email: settings.email.adminEmail, from_email: clientEmail, message: `New lead from SpotAware.dev!\nEmail: ${clientEmail}\nTime: ${new Date().toLocaleString()}`, client_email: clientEmail }, settings.email.publicKey); } catch (e) { console.log('Email failed:', e); }
+    try { await emailjs.send(settings.email.serviceId, settings.email.templateIdLead, { to_email: settings.email.adminEmail, from_email: clientEmail, message: `New lead from SpotAware.dev!\nEmail: ${clientEmail}\nTime: ${new Date().toLocaleString()}`, client_email: clientEmail }, settings.email.publicKey); } catch (e) { console.error('Email failed:', e); }
   };
 
   const startChat = async (withEmail: boolean = true) => {
@@ -114,7 +114,10 @@ export default function ChatAgent() {
       history.push({ role: 'user', content: content.trim() });
       const headers: Record<string, string> = { 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'SpotAware.dev' };
       if (settings.api.useCustomKey && settings.api.openrouterApiKey) headers['Authorization'] = `Bearer ${settings.api.openrouterApiKey}`;
-      const res = await fetch(OPENROUTER_API_URL, { method: 'POST', headers, body: JSON.stringify({ model: settings.api.openrouterModel, messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history], max_tokens: 200, temperature: 0.7 }) });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(OPENROUTER_API_URL, { method: 'POST', headers, body: JSON.stringify({ model: settings.api.openrouterModel, messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history], max_tokens: 200, temperature: 0.7 }), signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!res.ok) throw new Error('API failed');
       const data = await res.json();
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: data.choices?.[0]?.message?.content || "I'd love to help! What would you like to know?", timestamp: new Date() }]);

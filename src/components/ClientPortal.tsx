@@ -395,7 +395,7 @@ export default function ClientPortal({ onClose }: { onClose: () => void }) {
           message: `New order from ${session.name} (${session.email})!\n\nService: ${svc.name}\nPrice: $${svc.price}\nNotes: ${orderNotes || 'None'}\n\nLogin to Admin Panel to manage.`,
           client_email: session.email,
         }, s.email.publicKey);
-      } catch (e) { console.log('Email failed:', e); }
+      } catch (e) { console.error('Email failed:', e); }
     }
     logActivity('order', 'New Order', `${svc.name} — $${svc.price}`, undefined, session.email);
     setOrderService(''); setOrderNotes('');
