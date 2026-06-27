@@ -15,12 +15,14 @@ const LEDGER_ICONS: Record<LedgerEntryType, string> = {
   capital_in: '💰', capital_return: '🔄', inventory_purchase: '📦', inventory_adjustment: '🔧',
   sale: '🛒', marketplace_holding: '⏳', marketplace_released: '🏦', marketplace_available: '✅',
   profit_earned: '📈', profit_withdrawn: '💸', adjustment: '⚙️',
+  reship_cost: '↩️', reship_inventory: '🔁',
 };
 
 const LEDGER_COLORS: Record<LedgerEntryType, string> = {
   capital_in: '#60a5fa', capital_return: '#34d399', inventory_purchase: '#f59e0b', inventory_adjustment: '#6b7280',
   sale: '#a78bfa', marketplace_holding: '#f59e0b', marketplace_released: '#eab308',
   marketplace_available: '#00e5ff', profit_earned: '#34d399', profit_withdrawn: '#22c55e', adjustment: '#6b7280',
+  reship_cost: '#ef4444', reship_inventory: '#f97316',
 };
 
 const NAV_LINKS = [
@@ -106,6 +108,27 @@ export default function FinancialDashboard() {
               </motion.div>
             ))}
           </div>
+
+          {/* Reship Metrics */}
+          {summary.totalReships > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { label: 'Total Reships', value: String(summary.totalReships), color: '#f97316', icon: '↩️' },
+                { label: 'Gross Reship Cost', value: fmt(summary.totalGrossReshipCost), color: '#ef4444', icon: '💸' },
+                { label: 'Supplier Recovery', value: fmt(summary.totalSupplierRecovery), color: '#34d399', icon: '🔄' },
+                { label: 'Net Reship Loss', value: fmt(summary.totalNetReshipLoss), color: '#f59e0b', icon: '⚠️' },
+              ].map(m => (
+                <motion.div key={m.label} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                  className="rounded-xl border p-4" style={{ background: bgCard, borderColor: borderLight }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span>{m.icon}</span>
+                    <p className="text-xs" style={{ color: textMuted }}>{m.label}</p>
+                  </div>
+                  <p className="text-xl font-bold" style={{ color: m.color }}>{m.value}</p>
+                </motion.div>
+              ))}
+            </div>
+          )}
 
           {/* Counts */}
           <div className="flex gap-3 flex-wrap">

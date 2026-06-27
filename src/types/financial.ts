@@ -108,7 +108,9 @@ export type LedgerEntryType =
   | 'marketplace_available'
   | 'profit_earned'
   | 'profit_withdrawn'
-  | 'adjustment';
+  | 'adjustment'
+  | 'reship_cost'
+  | 'reship_inventory';
 
 export interface LedgerEntry {
   id: string;
@@ -154,11 +156,59 @@ export interface StockMovement {
   qty: number;          // Always positive; direction is determined by type
   unitCost: number;
   totalValue: number;   // qty × unitCost
-  saleId?: string;      // Reference to MarketplaceSettlement.id (set for SALE_OUT)
+  saleId?: string;      // Reference to MarketplaceSettlement.id (set for SALE_OUT from sale)
+  reshipId?: string;    // Reference to SaleReship.reshipId (set for SALE_OUT from reship)
   note?: string;
   date: string;
   createdAt: string;
   isReconciliation: boolean; // true when auto-created by the reconciliation migration
+}
+
+// ── Reship Engine ─────────────────────────────────────────────────────────────
+// Every sale can have unlimited reships. A reship is NOT a new sale — it is part of
+// the original sale lifecycle. Net Reship Loss = Gross Reship Cost − Supplier Recovery.
+
+export type ReshipDeliveryStatus = 'pending' | 'shipped' | 'delivered' | 'returned' | 'lost';
+export type ShippingLabelProvider = 'FedEx' | 'UPS' | 'USPS' | 'DHL' | 'Other';
+export type SupplierClaimStatus = 'none' | 'pending' | 'submitted' | 'approved' | 'rejected' | 'paid';
+
+export interface ReshipCosts {
+  shippingLabelCost: number;
+  shippingProvider?: ShippingLabelProvider;
+  trackingNumber?: string;
+  labelPurchasedDate?: string;
+  labelPdfUrl?: string;
+  replacementProductCost: number; // per-unit cost; gross = replacementProductCost × qty
+  packagingCost: number;
+  insuranceCost: number;
+  otherCost: number;
+}
+
+export interface SaleReship {
+  reshipId: string;
+  saleId: string;
+  reshipNumber: number;    // auto-assigned, 1-based per saleId
+  qty: number;             // default 1; drives inventory deduction + replacement cost
+  reason: string;
+  notes?: string;
+  reshipDate: string;
+  deliveryStatus: ReshipDeliveryStatus;
+  costs: ReshipCosts;
+  inventoryItemId?: string;      // mirrors sale's inventoryItemId for replacement deduction
+  inventoryMovementId?: string;  // id of the StockMovement created when reship was added
+  supplierClaimStatus: SupplierClaimStatus;
+  supplierRecoveredAmount: number;
+  recoveryDate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReshipSummary {
+  totalReships: number;
+  totalGrossReshipCost: number;
+  totalSupplierRecovery: number;
+  totalNetReshipLoss: number;
+  avgNetReshipLoss: number;
 }
 
 // ── Reconciliation Report ─────────────────────────────────────────────────────
@@ -225,6 +275,11 @@ export interface InvestorWallet {
   outstandingProfit: number;
   roi: number;
   recentActivity: FinancialTimelineEvent[];
+  // Reship impact
+  reshipCount: number;
+  reshipGrossLoss: number;
+  reshipSupplierRecovery: number;
+  reshipNetLoss: number;
 }
 
 // ── Future Multi-Currency ─────────────────────────────────────────────────────
@@ -256,6 +311,11 @@ export interface FinancialSummary {
   investorCount: number;
   activeSettlements: number;
   wallets: CompanyWallet[];
+  // Reship totals
+  totalReships: number;
+  totalGrossReshipCost: number;
+  totalNetReshipLoss: number;
+  totalSupplierRecovery: number;
 }
 
 // ── Store Shape ───────────────────────────────────────────────────────────────
@@ -269,6 +329,8 @@ export interface FinancialData {
   ledgerEntries: LedgerEntry[];
   inventoryItems: InventoryItem[];
   stockMovements: StockMovement[];
+  saleReships: SaleReship[];
   _migrationH: boolean;                       // true after Migration H (withdrawalType backfill)
   _migrationInventoryReconciliation: boolean; // true after first inventory reconciliation pass
+  _migrationReshipV1: boolean;               // true after Reship V1 migration (arrays initialized)
 }

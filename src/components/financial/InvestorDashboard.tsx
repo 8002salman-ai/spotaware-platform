@@ -23,6 +23,8 @@ const TYPE_ICONS: Record<LedgerEntryType, string> = {
   profit_earned: '📈',
   profit_withdrawn: '💸',
   adjustment: '⚙️',
+  reship_cost: '↩️',
+  reship_inventory: '🔁',
 };
 
 const TYPE_COLORS: Record<LedgerEntryType, string> = {
@@ -37,6 +39,8 @@ const TYPE_COLORS: Record<LedgerEntryType, string> = {
   profit_earned: '#34d399',
   profit_withdrawn: '#22c55e',
   adjustment: '#6b7280',
+  reship_cost: '#ef4444',
+  reship_inventory: '#f97316',
 };
 
 function WalletMetric({ label, value, color }: { label: string; value: string; color: string }) {
@@ -127,6 +131,14 @@ export default function InvestorDashboard() {
               <WalletMetric label="Profit Paid" value={fmt(wallet.profitPaid)} color="#22c55e" />
               <WalletMetric label="Outstanding Profit" value={fmt(wallet.outstandingProfit)} color={wallet.outstandingProfit > 0 ? '#f59e0b' : '#4b5563'} />
             </div>
+            {wallet.reshipCount > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <WalletMetric label="Reships" value={String(wallet.reshipCount)} color="#f97316" />
+                <WalletMetric label="Gross Reship Cost" value={fmt(wallet.reshipGrossLoss)} color="#ef4444" />
+                <WalletMetric label="Supplier Recovery" value={fmt(wallet.reshipSupplierRecovery)} color="#34d399" />
+                <WalletMetric label="Net Reship Loss" value={fmt(wallet.reshipNetLoss)} color="#f59e0b" />
+              </div>
+            )}
           </div>
 
           {/* Per-Company Breakdown */}
@@ -194,6 +206,11 @@ export default function InvestorDashboard() {
                 { label: 'Total Profit Paid', value: fmt(wallet.profitPaid) },
                 { label: 'Outstanding Profit Owed', value: fmt(wallet.outstandingProfit) },
                 { label: 'Return on Investment', value: `${wallet.roi.toFixed(2)}%` },
+                ...(wallet.reshipCount > 0 ? [
+                  { label: `Reships (${wallet.reshipCount})`, value: fmt(wallet.reshipGrossLoss) },
+                  { label: 'Supplier Recovery', value: fmt(wallet.reshipSupplierRecovery) },
+                  { label: 'Net Reship Loss', value: fmt(wallet.reshipNetLoss) },
+                ] : []),
               ].map(row => (
                 <div key={row.label} className="flex justify-between py-1.5 border-b" style={{ borderColor: borderLight }}>
                   <span style={{ color: textSecondary }}>{row.label}</span>

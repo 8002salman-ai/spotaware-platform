@@ -4,6 +4,7 @@ import { getFinancialData, getInvestors, getCompanies } from '../../store/financ
 import {
   getCompanyWallet, getInvestorWallet, buildTimeline,
   getCapitalLedger, getProfitLedger, fmt, fmtDate,
+  computeGrossReshipCost, computeNetReshipLoss,
 } from '../../utils/financial/calculations';
 import type { FinancialCompany, Investor, LedgerEntryType } from '../../types/financial';
 
@@ -19,7 +20,7 @@ const LEDGER_ICONS: Partial<Record<LedgerEntryType, string>> = {
   profit_earned: '📈', profit_withdrawn: '💸', sale: '🛒',
 };
 
-type ReportType = 'investor_statement' | 'capital_report' | 'profit_report' | 'payout_report' | 'company_summary' | 'roi_report';
+type ReportType = 'investor_statement' | 'capital_report' | 'profit_report' | 'payout_report' | 'company_summary' | 'roi_report' | 'reship_report';
 
 const REPORT_DEFS: { type: ReportType; label: string; icon: string; description: string }[] = [
   { type: 'investor_statement', label: 'Investor Statement', icon: '📄', description: 'Complete financial statement per investor — capital, profit, ROI' },
@@ -28,6 +29,7 @@ const REPORT_DEFS: { type: ReportType; label: string; icon: string; description:
   { type: 'payout_report', label: 'Payout Report', icon: '💸', description: 'Outstanding amounts owed to each investor' },
   { type: 'company_summary', label: 'Company Summary', icon: '🏢', description: 'Financial summary per company with wallet breakdown' },
   { type: 'roi_report', label: 'ROI Report', icon: '📊', description: 'Return on investment for each investor across all companies' },
+  { type: 'reship_report', label: 'Reship Report', icon: '↩️', description: 'All reships with gross cost, supplier recovery, net loss, and final profit' },
 ];
 
 export default function FinancialReports() {
@@ -94,6 +96,37 @@ export default function FinancialReports() {
         return { investor: inv.name, capitalInvested: w.capitalInvested, profitEarned: w.profitEarned, roi: w.roi };
       }).sort((a, b) => b.roi - a.roi);
       setReportData({ type: 'roi_report', rows: result });
+    } else if (selectedReport === 'reship_report') {
+      const reships = data.saleReships ?? [];
+      const filtered = reships.filter(r => {
+        const sale = data.marketplaceSettlements.find(s => s.id === r.saleId);
+        return (!filterCo || sale?.companyId === filterCo);
+      });
+      const result = filtered.map(r => {
+        const sale = data.marketplaceSettlements.find(s => s.id === r.saleId);
+        const co = sale ? companies.find(c => c.id === sale.companyId) : null;
+        const inv = sale?.inventoryItemId ? data.inventoryItems?.find(i => i.id === sale.inventoryItemId) : null;
+        const grossCost = computeGrossReshipCost(r);
+        const netLoss = computeNetReshipLoss(r);
+        return {
+          sale: sale?.saleRef ?? r.saleId,
+          company: co?.name ?? sale?.companyId ?? '',
+          marketplace: sale?.marketplace ?? '',
+          reshipNumber: r.reshipNumber,
+          reshipDate: fmtDate(r.reshipDate),
+          reason: r.reason,
+          qty: r.qty,
+          productSku: inv?.sku ?? '',
+          shippingCost: r.costs.shippingLabelCost,
+          replacementCost: r.costs.replacementProductCost * r.qty,
+          totalReshipCost: grossCost,
+          supplierRecovery: r.supplierRecoveredAmount,
+          netLoss,
+          deliveryStatus: r.deliveryStatus,
+          supplierClaimStatus: r.supplierClaimStatus,
+        };
+      });
+      setReportData({ type: 'reship_report', rows: result });
     }
   };
 

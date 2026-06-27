@@ -14,6 +14,7 @@ const CompanyWallet          = lazy(() => import('./CompanyWallet'));
 const FinancialDashboard     = lazy(() => import('./FinancialDashboard'));
 const FinancialReports       = lazy(() => import('./FinancialReports'));
 const InventoryManagement    = lazy(() => import('./InventoryManagement'));
+const ReshipEngine           = lazy(() => import('./ReshipEngine'));
 
 const bg = 'var(--t-bg,#0f1923)';
 const bgCard = 'var(--t-card,#152230)';
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { path: '/financial/withdrawals', label: 'Withdrawal Engine', icon: '💸' },
   { path: '/financial/inventory', label: 'Inventory', icon: '📦' },
   { path: '/financial/marketplace', label: 'Marketplace Payouts', icon: '🛒' },
+  { path: '/financial/reships', label: 'Reship Engine', icon: '↩️' },
   { path: '/financial/investor-dashboard', label: 'Investor Dashboard', icon: '👤' },
   { path: '/financial/company-wallet', label: 'Company Wallets', icon: '🏦' },
   { path: '/financial/reports', label: 'Reports', icon: '📋' },
@@ -197,6 +199,7 @@ export default function FinancialEngine() {
               <Route path="/withdrawals" element={<WithdrawalEngine />} />
               <Route path="/inventory" element={<InventoryManagement />} />
               <Route path="/marketplace" element={<MarketplacePayoutEngine />} />
+              <Route path="/reships" element={<ReshipEngine />} />
               <Route path="/investor-dashboard" element={<InvestorDashboard />} />
               <Route path="/company-wallet" element={<CompanyWallet />} />
               <Route path="/reports" element={<FinancialReports />} />
