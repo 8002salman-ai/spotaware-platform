@@ -17,6 +17,8 @@ import type {
   StockMovement,
   ReconciliationReport,
   InventorySnapshot,
+  SaleReship,
+  ReshipCosts,
 } from '../types/financial';
 
 const STORAGE_KEY = 'spotaware_financial';
@@ -81,6 +83,13 @@ function applyInventoryReconciliation(data: FinancialData): FinancialData {
   };
 }
 
+// ── Reship V1 Migration ───────────────────────────────────────────────────────
+// No-op for existing data (no legacy reship records exist). Ensures saleReships array exists.
+function applyMigrationReshipV1(data: FinancialData): FinancialData {
+  if (data._migrationReshipV1) return data;
+  return { ...data, saleReships: data.saleReships ?? [], _migrationReshipV1: true };
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 const EMPTY: FinancialData = {
@@ -92,22 +101,25 @@ const EMPTY: FinancialData = {
   ledgerEntries: [],
   inventoryItems: [],
   stockMovements: [],
+  saleReships: [],
   _migrationH: false,
   _migrationInventoryReconciliation: false,
+  _migrationReshipV1: false,
 };
 
 export function getFinancialData(): FinancialData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...EMPTY, _migrationH: true, _migrationInventoryReconciliation: true };
+    if (!raw) return { ...EMPTY, _migrationH: true, _migrationInventoryReconciliation: true, _migrationReshipV1: true };
     const parsed = JSON.parse(raw) as FinancialData;
     const migH = applyMigrationH({ ...EMPTY, ...parsed });
-    const result = applyInventoryReconciliation(migH);
+    const migInv = applyInventoryReconciliation(migH);
+    const result = applyMigrationReshipV1(migInv);
     // Persist if any migration changed state (reference inequality = something mutated)
     if (result !== migH) save(result);
     return result;
   } catch {
-    return { ...EMPTY, _migrationH: true, _migrationInventoryReconciliation: true };
+    return { ...EMPTY, _migrationH: true, _migrationInventoryReconciliation: true, _migrationReshipV1: true };
   }
 }
 
@@ -341,31 +353,45 @@ export function deleteSettlement(id: string): void {
   const data = getFinancialData();
   const settlement = data.marketplaceSettlements.find(s => s.id === id);
 
-  // Reverse inventory deduction if the settlement was linked
+  // Collect all reships for this settlement and their inventory movements
+  const reships = data.saleReships.filter(r => r.saleId === id);
+  const reshipIds = new Set(reships.map(r => r.reshipId));
+
   let inventoryItems = data.inventoryItems;
+  const now = new Date().toISOString();
+
+  // Reverse inventory deduction from the original sale
   if (settlement?.inventoryItemId) {
-    const movement = data.stockMovements.find(m => m.saleId === id && m.type === 'SALE_OUT');
+    const movement = data.stockMovements.find(m => m.saleId === id && m.type === 'SALE_OUT' && !m.reshipId);
     if (movement) {
-      const qty = movement.qty;
-      const now = new Date().toISOString();
-      inventoryItems = data.inventoryItems.map(i =>
+      inventoryItems = inventoryItems.map(i =>
         i.id === settlement.inventoryItemId
-          ? {
-              ...i,
-              soldQty: Math.max(0, i.soldQty - qty),
-              currentQty: i.currentQty + qty,
-              updatedAt: now,
-            }
+          ? { ...i, soldQty: Math.max(0, i.soldQty - movement.qty), currentQty: i.currentQty + movement.qty, updatedAt: now }
           : i
       );
+    }
+  }
+
+  // Reverse inventory deductions from all cascade-deleted reships
+  for (const reship of reships) {
+    if (reship.inventoryItemId && reship.inventoryMovementId) {
+      const mv = data.stockMovements.find(m => m.id === reship.inventoryMovementId);
+      if (mv) {
+        inventoryItems = inventoryItems.map(i =>
+          i.id === reship.inventoryItemId
+            ? { ...i, soldQty: Math.max(0, i.soldQty - mv.qty), currentQty: i.currentQty + mv.qty, updatedAt: now }
+            : i
+        );
+      }
     }
   }
 
   save({
     ...data,
     marketplaceSettlements: data.marketplaceSettlements.filter(s => s.id !== id),
-    ledgerEntries: data.ledgerEntries.filter(e => e.referenceId !== id),
-    stockMovements: data.stockMovements.filter(m => m.saleId !== id),
+    saleReships: data.saleReships.filter(r => r.saleId !== id),
+    ledgerEntries: data.ledgerEntries.filter(e => e.referenceId !== id && !reshipIds.has(e.referenceId ?? '')),
+    stockMovements: data.stockMovements.filter(m => m.saleId !== id && (!m.reshipId || !reshipIds.has(m.reshipId))),
     inventoryItems,
   });
 }
@@ -443,6 +469,164 @@ export function getStockMovements(inventoryItemId?: string): StockMovement[] {
   return inventoryItemId
     ? data.stockMovements.filter(m => m.inventoryItemId === inventoryItemId)
     : data.stockMovements;
+}
+
+// ── Sale Reships ──────────────────────────────────────────────────────────────
+
+export function getSaleReships(saleId?: string): SaleReship[] {
+  const data = getFinancialData();
+  return saleId
+    ? data.saleReships.filter(r => r.saleId === saleId)
+    : data.saleReships;
+}
+
+export function addSaleReship(
+  input: Omit<SaleReship, 'reshipId' | 'reshipNumber' | 'createdAt' | 'updatedAt' | 'inventoryMovementId'> & {
+    costs: ReshipCosts;
+  }
+): SaleReship {
+  const data = getFinancialData();
+  const now = new Date().toISOString();
+  const existingForSale = data.saleReships.filter(r => r.saleId === input.saleId);
+  const reshipNumber = existingForSale.length > 0
+    ? Math.max(...existingForSale.map(r => r.reshipNumber)) + 1
+    : 1;
+
+  const reshipId = `rsh_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const qty = input.qty ?? 1;
+
+  let inventoryMovementId: string | undefined;
+  let updatedInventoryItems = data.inventoryItems;
+  let updatedStockMovements = data.stockMovements;
+
+  // Deduct replacement inventory if linked
+  if (input.inventoryItemId) {
+    const item = data.inventoryItems.find(i => i.id === input.inventoryItemId);
+    if (item) {
+      const mvId = `smv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      inventoryMovementId = mvId;
+      const movement: StockMovement = {
+        id: mvId,
+        inventoryItemId: item.id,
+        companyId: item.companyId,
+        type: 'SALE_OUT',
+        qty,
+        unitCost: item.unitCost,
+        totalValue: qty * item.unitCost,
+        reshipId,
+        note: `Reship #${reshipNumber}: ${input.reason}`,
+        date: input.reshipDate,
+        createdAt: now,
+        isReconciliation: false,
+      };
+      updatedStockMovements = [...data.stockMovements, movement];
+      updatedInventoryItems = data.inventoryItems.map(i =>
+        i.id === item.id
+          ? { ...i, soldQty: i.soldQty + qty, currentQty: Math.max(0, i.purchasedQty - i.soldQty - qty), updatedAt: now }
+          : i
+      );
+    }
+  }
+
+  const rec: SaleReship = {
+    ...input,
+    reshipId,
+    reshipNumber,
+    qty,
+    inventoryMovementId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  // Build ledger entries for reship costs
+  const grossCost =
+    input.costs.shippingLabelCost +
+    (input.costs.replacementProductCost * qty) +
+    input.costs.packagingCost +
+    input.costs.insuranceCost +
+    input.costs.otherCost;
+
+  const sale = data.marketplaceSettlements.find(s => s.id === input.saleId);
+  const newLedger: LedgerEntry[] = [];
+
+  if (grossCost > 0) {
+    newLedger.push({
+      id: `led_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      companyId: sale?.companyId ?? '',
+      type: 'reship_cost',
+      debit: grossCost,
+      credit: 0,
+      description: `Reship #${reshipNumber} cost — ${input.reason}${sale?.saleRef ? ` (sale: ${sale.saleRef})` : ''}`,
+      referenceId: reshipId,
+      date: input.reshipDate,
+      createdAt: now,
+    });
+  }
+
+  if (input.inventoryItemId && input.costs.replacementProductCost > 0) {
+    const item = data.inventoryItems.find(i => i.id === input.inventoryItemId);
+    newLedger.push({
+      id: `led_${Date.now() + 1}_${Math.random().toString(36).slice(2, 9)}`,
+      companyId: sale?.companyId ?? '',
+      type: 'reship_inventory',
+      debit: input.costs.replacementProductCost * qty,
+      credit: 0,
+      description: `Reship #${reshipNumber} replacement inventory × ${qty}${item ? ` [${item.sku}]` : ''}`,
+      referenceId: reshipId,
+      date: input.reshipDate,
+      createdAt: now,
+    });
+  }
+
+  save({
+    ...data,
+    saleReships: [...data.saleReships, rec],
+    ledgerEntries: [...data.ledgerEntries, ...newLedger],
+    inventoryItems: updatedInventoryItems,
+    stockMovements: updatedStockMovements,
+  });
+
+  return rec;
+}
+
+export function updateSaleReship(reshipId: string, patch: Partial<Omit<SaleReship, 'reshipId' | 'reshipNumber' | 'saleId' | 'createdAt'>>): void {
+  const data = getFinancialData();
+  const now = new Date().toISOString();
+  save({
+    ...data,
+    saleReships: data.saleReships.map(r =>
+      r.reshipId === reshipId ? { ...r, ...patch, reshipId: r.reshipId, reshipNumber: r.reshipNumber, saleId: r.saleId, createdAt: r.createdAt, updatedAt: now } : r
+    ),
+  });
+}
+
+export function deleteSaleReship(reshipId: string): void {
+  const data = getFinancialData();
+  const reship = data.saleReships.find(r => r.reshipId === reshipId);
+  if (!reship) return;
+
+  let inventoryItems = data.inventoryItems;
+  const now = new Date().toISOString();
+
+  // Reverse inventory deduction if linked
+  if (reship.inventoryItemId && reship.inventoryMovementId) {
+    const mv = data.stockMovements.find(m => m.id === reship.inventoryMovementId);
+    if (mv) {
+      inventoryItems = data.inventoryItems.map(i =>
+        i.id === reship.inventoryItemId
+          ? { ...i, soldQty: Math.max(0, i.soldQty - mv.qty), currentQty: i.currentQty + mv.qty, updatedAt: now }
+          : i
+      );
+    }
+  }
+
+  save({
+    ...data,
+    saleReships: data.saleReships.filter(r => r.reshipId !== reshipId),
+    ledgerEntries: data.ledgerEntries.filter(e => e.referenceId !== reshipId),
+    stockMovements: data.stockMovements.filter(m => m.reshipId !== reshipId),
+    inventoryItems,
+  });
 }
 
 // ── Inventory Reconciliation (explicit, with report) ─────────────────────────

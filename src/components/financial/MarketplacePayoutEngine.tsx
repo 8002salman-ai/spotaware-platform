@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getMarketplaceSettlements, addMarketplaceSettlement, advanceSettlementStage, deleteSettlement,
-  getCompanies, getInventoryItems,
+  getCompanies, getInventoryItems, getSaleReships, addSaleReship, deleteSaleReship,
 } from '../../store/financialStore';
-import { fmt, fmtDate } from '../../utils/financial/calculations';
-import type { MarketplaceSettlement, MarketplaceSettlementStage, FinancialCompany, InventoryItem } from '../../types/financial';
+import { fmt, fmtDate, computeGrossReshipCost, computeNetReshipLoss } from '../../utils/financial/calculations';
+import type {
+  MarketplaceSettlement, MarketplaceSettlementStage, FinancialCompany, InventoryItem,
+  SaleReship, ReshipDeliveryStatus, ShippingLabelProvider, SupplierClaimStatus, ReshipCosts,
+} from '../../types/financial';
 
 const bgCard = 'var(--t-card,#152230)';
 const bgElevated = 'var(--t-el,#1a2d3d)';
@@ -44,6 +47,14 @@ const STAGE_COLORS: Record<MarketplaceSettlementStage, string> = {
 
 const inputCls = `w-full px-3 py-2 rounded-lg text-sm text-white outline-none border focus:border-cyan-glow/50 transition-colors`;
 
+const DELIVERY_COLORS: Record<ReshipDeliveryStatus, string> = {
+  pending: '#6b7280', shipped: '#60a5fa', delivered: '#34d399', returned: '#f59e0b', lost: '#ef4444',
+};
+
+const CLAIM_COLORS: Record<SupplierClaimStatus, string> = {
+  none: '#6b7280', pending: '#f59e0b', submitted: '#60a5fa', approved: '#a78bfa', rejected: '#ef4444', paid: '#34d399',
+};
+
 const EMPTY_FORM = {
   companyId: '',
   marketplace: '',
@@ -55,20 +66,44 @@ const EMPTY_FORM = {
   cog: '',
 };
 
+const EMPTY_RESHIP_FORM = {
+  qty: '1',
+  reason: '',
+  notes: '',
+  reshipDate: new Date().toISOString().split('T')[0],
+  deliveryStatus: 'pending' as ReshipDeliveryStatus,
+  shippingLabelCost: '',
+  shippingProvider: '' as ShippingLabelProvider | '',
+  trackingNumber: '',
+  labelPurchasedDate: '',
+  labelPdfUrl: '',
+  replacementProductCost: '',
+  packagingCost: '',
+  insuranceCost: '',
+  otherCost: '',
+  supplierClaimStatus: 'none' as SupplierClaimStatus,
+  supplierRecoveredAmount: '',
+  recoveryDate: '',
+};
+
 export default function MarketplacePayoutEngine() {
   const [settlements, setSettlements] = useState<MarketplaceSettlement[]>([]);
   const [companies, setCompanies] = useState<FinancialCompany[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [reships, setReships] = useState<SaleReship[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [filterCo, setFilterCo] = useState('');
   const [filterStage, setFilterStage] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [reshipModalSaleId, setReshipModalSaleId] = useState<string | null>(null);
+  const [reshipForm, setReshipForm] = useState(EMPTY_RESHIP_FORM);
 
   const reload = () => {
     setSettlements(getMarketplaceSettlements());
     setCompanies(getCompanies());
     setInventoryItems(getInventoryItems());
+    setReships(getSaleReships());
   };
   useEffect(() => { reload(); }, []);
 
@@ -121,6 +156,57 @@ export default function MarketplacePayoutEngine() {
   const remove = (id: string) => {
     if (!window.confirm('Delete this settlement record? Inventory stock will be restored if linked.')) return;
     deleteSettlement(id);
+    setExpandedId(null);
+    reload();
+  };
+
+  const openReshipModal = (saleId: string) => {
+    const sale = settlements.find(s => s.id === saleId);
+    setReshipForm({
+      ...EMPTY_RESHIP_FORM,
+      reshipDate: new Date().toISOString().split('T')[0],
+      replacementProductCost: sale?.inventoryItemId
+        ? String(inventoryItems.find(i => i.id === sale.inventoryItemId)?.unitCost ?? '')
+        : '',
+    });
+    setReshipModalSaleId(saleId);
+  };
+
+  const submitReship = () => {
+    if (!reshipModalSaleId || !reshipForm.reason || !reshipForm.reshipDate) return;
+    const sale = settlements.find(s => s.id === reshipModalSaleId);
+    const costs: ReshipCosts = {
+      shippingLabelCost: Number(reshipForm.shippingLabelCost) || 0,
+      shippingProvider: reshipForm.shippingProvider || undefined,
+      trackingNumber: reshipForm.trackingNumber || undefined,
+      labelPurchasedDate: reshipForm.labelPurchasedDate || undefined,
+      labelPdfUrl: reshipForm.labelPdfUrl || undefined,
+      replacementProductCost: Number(reshipForm.replacementProductCost) || 0,
+      packagingCost: Number(reshipForm.packagingCost) || 0,
+      insuranceCost: Number(reshipForm.insuranceCost) || 0,
+      otherCost: Number(reshipForm.otherCost) || 0,
+    };
+    addSaleReship({
+      saleId: reshipModalSaleId,
+      qty: Number(reshipForm.qty) || 1,
+      reason: reshipForm.reason,
+      notes: reshipForm.notes || undefined,
+      reshipDate: reshipForm.reshipDate,
+      deliveryStatus: reshipForm.deliveryStatus,
+      costs,
+      inventoryItemId: sale?.inventoryItemId,
+      supplierClaimStatus: reshipForm.supplierClaimStatus,
+      supplierRecoveredAmount: Number(reshipForm.supplierRecoveredAmount) || 0,
+      recoveryDate: reshipForm.recoveryDate || undefined,
+    });
+    setReshipModalSaleId(null);
+    setReshipForm(EMPTY_RESHIP_FORM);
+    reload();
+  };
+
+  const removeReship = (reshipId: string) => {
+    if (!window.confirm('Delete this reship? Inventory stock will be restored if linked.')) return;
+    deleteSaleReship(reshipId);
     reload();
   };
 
@@ -245,9 +331,9 @@ export default function MarketplacePayoutEngine() {
               <AnimatePresence>
                 {expandedId === s.id && (
                   <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                    className="border-t px-4 py-3 overflow-hidden" style={{ borderColor: borderLight }}>
+                    className="border-t px-4 py-3 space-y-3 overflow-hidden" style={{ borderColor: borderLight }}>
                     {linkedItem && (
-                      <div className="mb-3 rounded-lg px-3 py-2 text-xs" style={{ background: '#34d39908', border: '1px solid #34d39920' }}>
+                      <div className="rounded-lg px-3 py-2 text-xs" style={{ background: '#34d39908', border: '1px solid #34d39920' }}>
                         <p className="font-medium mb-1" style={{ color: '#34d399' }}>Inventory Link</p>
                         <div className="flex gap-4 flex-wrap" style={{ color: textSecondary }}>
                           <span>SKU: <span className="text-white font-mono">{linkedItem.sku}</span></span>
@@ -258,17 +344,84 @@ export default function MarketplacePayoutEngine() {
                         </div>
                       </div>
                     )}
-                    <p className="text-xs font-medium mb-2" style={{ color: textMuted }}>Stage History</p>
-                    <div className="space-y-1.5">
-                      {s.stageHistory.map((h, i) => (
-                        <div key={i} className="flex items-center gap-3 text-xs">
-                          <span className="px-2 py-0.5 rounded-full" style={{ background: STAGE_COLORS[h.stage] + '20', color: STAGE_COLORS[h.stage] }}>
-                            {STAGE_LABELS[h.stage]}
-                          </span>
-                          <span style={{ color: textMuted }}>{new Date(h.timestamp).toLocaleString()}</span>
-                          {h.note && <span style={{ color: textSecondary }}>{h.note}</span>}
+
+                    {/* Reship History */}
+                    {(() => {
+                      const saleReships = reships.filter(r => r.saleId === s.id);
+                      return (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs font-medium" style={{ color: textMuted }}>
+                              Reship History ({saleReships.length})
+                            </p>
+                            <button onClick={() => openReshipModal(s.id)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium"
+                              style={{ background: '#f9741615', border: '1px solid #f9741630', color: '#f97316' }}>
+                              + Add Reship
+                            </button>
+                          </div>
+                          {saleReships.length === 0 ? (
+                            <p className="text-xs" style={{ color: textMuted }}>No reships for this sale.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {saleReships.map(r => {
+                                const gross = computeGrossReshipCost(r);
+                                const net = computeNetReshipLoss(r);
+                                return (
+                                  <div key={r.reshipId} className="rounded-lg px-3 py-2 text-xs" style={{ background: bgElevated, border: `1px solid ${borderLight}` }}>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-medium text-white">↩️ Reship #{r.reshipNumber}</span>
+                                        <span className="px-1.5 py-0.5 rounded-full"
+                                          style={{ background: DELIVERY_COLORS[r.deliveryStatus] + '20', color: DELIVERY_COLORS[r.deliveryStatus] }}>
+                                          {r.deliveryStatus}
+                                        </span>
+                                        {r.supplierClaimStatus !== 'none' && (
+                                          <span className="px-1.5 py-0.5 rounded-full"
+                                            style={{ background: CLAIM_COLORS[r.supplierClaimStatus] + '20', color: CLAIM_COLORS[r.supplierClaimStatus] }}>
+                                            {r.supplierClaimStatus}
+                                          </span>
+                                        )}
+                                        <span style={{ color: textMuted }}>{fmtDate(r.reshipDate)} · qty {r.qty}</span>
+                                      </div>
+                                      <button onClick={() => removeReship(r.reshipId)} className="text-xs px-1 py-0.5 rounded" style={{ background: '#ef444415', color: '#ef4444' }}>✕</button>
+                                    </div>
+                                    <p style={{ color: textSecondary }}>{r.reason}{r.notes ? ` — ${r.notes}` : ''}</p>
+                                    {r.costs.trackingNumber && (
+                                      <p className="mt-0.5" style={{ color: textMuted }}>
+                                        {r.costs.shippingProvider && `${r.costs.shippingProvider} · `}
+                                        Tracking: <span className="font-mono text-white">{r.costs.trackingNumber}</span>
+                                      </p>
+                                    )}
+                                    <div className="flex gap-4 mt-1.5 flex-wrap">
+                                      <span style={{ color: textMuted }}>Gross: <span style={{ color: '#ef4444' }}>{fmt(gross)}</span></span>
+                                      {r.supplierRecoveredAmount > 0 && (
+                                        <span style={{ color: textMuted }}>Recovery: <span style={{ color: '#34d399' }}>{fmt(r.supplierRecoveredAmount)}</span></span>
+                                      )}
+                                      <span style={{ color: textMuted }}>Net Loss: <span className="font-semibold" style={{ color: '#f59e0b' }}>{fmt(net)}</span></span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
-                      ))}
+                      );
+                    })()}
+
+                    <div>
+                      <p className="text-xs font-medium mb-2" style={{ color: textMuted }}>Stage History</p>
+                      <div className="space-y-1.5">
+                        {s.stageHistory.map((h, i) => (
+                          <div key={i} className="flex items-center gap-3 text-xs">
+                            <span className="px-2 py-0.5 rounded-full" style={{ background: STAGE_COLORS[h.stage] + '20', color: STAGE_COLORS[h.stage] }}>
+                              {STAGE_LABELS[h.stage]}
+                            </span>
+                            <span style={{ color: textMuted }}>{new Date(h.timestamp).toLocaleString()}</span>
+                            {h.note && <span style={{ color: textSecondary }}>{h.note}</span>}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </motion.div>
                 )}
@@ -277,6 +430,192 @@ export default function MarketplacePayoutEngine() {
           );
         })}
       </div>
+
+      {/* Add Reship Modal */}
+      {reshipModalSaleId && (() => {
+        const sale = settlements.find(s => s.id === reshipModalSaleId);
+        const saleItem = sale?.inventoryItemId ? inventoryItems.find(i => i.id === sale.inventoryItemId) : null;
+        const previewGross = (Number(reshipForm.shippingLabelCost) || 0)
+          + (Number(reshipForm.replacementProductCost) || 0) * (Number(reshipForm.qty) || 1)
+          + (Number(reshipForm.packagingCost) || 0)
+          + (Number(reshipForm.insuranceCost) || 0)
+          + (Number(reshipForm.otherCost) || 0);
+        const previewNet = Math.max(0, previewGross - (Number(reshipForm.supplierRecoveredAmount) || 0));
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto" style={{ background: 'rgba(0,0,0,0.7)' }}>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+              className="w-full max-w-lg rounded-2xl border p-6 space-y-4 my-4" style={{ background: bgCard, borderColor: border }}>
+              <div>
+                <h3 className="font-semibold text-white">Add Reship</h3>
+                {sale && <p className="text-xs mt-0.5" style={{ color: textMuted }}>{sale.marketplace}{sale.saleRef ? ` · ${sale.saleRef}` : ''}</p>}
+              </div>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Reship Date *</label>
+                    <input type="date" value={reshipForm.reshipDate}
+                      onChange={e => setReshipForm(f => ({ ...f, reshipDate: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Quantity</label>
+                    <input type="number" min="1" step="1" value={reshipForm.qty}
+                      onChange={e => setReshipForm(f => ({ ...f, qty: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs mb-1 block" style={{ color: textMuted }}>Reason *</label>
+                  <input value={reshipForm.reason}
+                    onChange={e => setReshipForm(f => ({ ...f, reason: e.target.value }))}
+                    className={inputCls} style={{ background: bgInput, borderColor: borderLight }}
+                    placeholder="e.g. Item damaged in transit, Wrong item shipped" />
+                </div>
+                <div>
+                  <label className="text-xs mb-1 block" style={{ color: textMuted }}>Notes</label>
+                  <input value={reshipForm.notes}
+                    onChange={e => setReshipForm(f => ({ ...f, notes: e.target.value }))}
+                    className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="Optional notes" />
+                </div>
+                <div>
+                  <label className="text-xs mb-1 block" style={{ color: textMuted }}>Delivery Status</label>
+                  <select value={reshipForm.deliveryStatus}
+                    onChange={e => setReshipForm(f => ({ ...f, deliveryStatus: e.target.value as ReshipDeliveryStatus }))}
+                    className={inputCls} style={{ background: bgInput, borderColor: borderLight }}>
+                    {(['pending', 'shipped', 'delivered', 'returned', 'lost'] as ReshipDeliveryStatus[]).map(s => (
+                      <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <p className="text-xs font-medium pt-1" style={{ color: textMuted }}>— Costs —</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Shipping Label Cost</label>
+                    <input type="number" min="0" step="0.01" value={reshipForm.shippingLabelCost}
+                      onChange={e => setReshipForm(f => ({ ...f, shippingLabelCost: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Replacement Cost / unit{saleItem ? ` (stock: ${saleItem.currentQty})` : ''}</label>
+                    <input type="number" min="0" step="0.01" value={reshipForm.replacementProductCost}
+                      onChange={e => setReshipForm(f => ({ ...f, replacementProductCost: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Packaging Cost</label>
+                    <input type="number" min="0" step="0.01" value={reshipForm.packagingCost}
+                      onChange={e => setReshipForm(f => ({ ...f, packagingCost: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Insurance Cost</label>
+                    <input type="number" min="0" step="0.01" value={reshipForm.insuranceCost}
+                      onChange={e => setReshipForm(f => ({ ...f, insuranceCost: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Other Cost</label>
+                    <input type="number" min="0" step="0.01" value={reshipForm.otherCost}
+                      onChange={e => setReshipForm(f => ({ ...f, otherCost: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="0.00" />
+                  </div>
+                </div>
+
+                <p className="text-xs font-medium pt-1" style={{ color: textMuted }}>— Shipping Label —</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Provider</label>
+                    <select value={reshipForm.shippingProvider}
+                      onChange={e => setReshipForm(f => ({ ...f, shippingProvider: e.target.value as ShippingLabelProvider | '' }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }}>
+                      <option value="">— Select —</option>
+                      {(['FedEx', 'UPS', 'USPS', 'DHL', 'Other'] as ShippingLabelProvider[]).map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Tracking Number</label>
+                    <input value={reshipForm.trackingNumber}
+                      onChange={e => setReshipForm(f => ({ ...f, trackingNumber: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="1Z…" />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Label Purchased Date</label>
+                    <input type="date" value={reshipForm.labelPurchasedDate}
+                      onChange={e => setReshipForm(f => ({ ...f, labelPurchasedDate: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Label PDF / URL</label>
+                    <input value={reshipForm.labelPdfUrl}
+                      onChange={e => setReshipForm(f => ({ ...f, labelPdfUrl: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="https://…" />
+                  </div>
+                </div>
+
+                <p className="text-xs font-medium pt-1" style={{ color: textMuted }}>— Supplier Recovery —</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Claim Status</label>
+                    <select value={reshipForm.supplierClaimStatus}
+                      onChange={e => setReshipForm(f => ({ ...f, supplierClaimStatus: e.target.value as SupplierClaimStatus }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }}>
+                      {(['none', 'pending', 'submitted', 'approved', 'rejected', 'paid'] as SupplierClaimStatus[]).map(s => (
+                        <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Recovered Amount</label>
+                    <input type="number" min="0" step="0.01" value={reshipForm.supplierRecoveredAmount}
+                      onChange={e => setReshipForm(f => ({ ...f, supplierRecoveredAmount: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1 block" style={{ color: textMuted }}>Recovery Date</label>
+                    <input type="date" value={reshipForm.recoveryDate}
+                      onChange={e => setReshipForm(f => ({ ...f, recoveryDate: e.target.value }))}
+                      className={inputCls} style={{ background: bgInput, borderColor: borderLight }} />
+                  </div>
+                </div>
+
+                {/* Preview */}
+                {previewGross > 0 && (
+                  <div className="rounded-lg px-3 py-2 text-xs space-y-1" style={{ background: bgElevated }}>
+                    <div className="flex justify-between" style={{ color: textSecondary }}>
+                      <span>Gross Reship Cost</span><span style={{ color: '#ef4444' }}>{fmt(previewGross)}</span>
+                    </div>
+                    {Number(reshipForm.supplierRecoveredAmount) > 0 && (
+                      <div className="flex justify-between" style={{ color: textSecondary }}>
+                        <span>Supplier Recovery</span><span style={{ color: '#34d399' }}>− {fmt(Number(reshipForm.supplierRecoveredAmount))}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-medium border-t pt-1" style={{ borderColor: borderLight, color: textSecondary }}>
+                      <span>Net Company Loss</span>
+                      <span style={{ color: '#f59e0b' }}>{fmt(previewNet)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button onClick={submitReship}
+                  disabled={!reshipForm.reason || !reshipForm.reshipDate}
+                  className="flex-1 py-2 rounded-lg text-sm font-medium disabled:opacity-40"
+                  style={{ background: '#f9741622', border: '1px solid #f9741655', color: '#f97316' }}>
+                  Add Reship
+                </button>
+                <button onClick={() => setReshipModalSaleId(null)} className="px-4 py-2 rounded-lg text-sm"
+                  style={{ background: bgElevated, color: textSecondary }}>
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
 
       {/* Form Modal */}
       {showForm && (

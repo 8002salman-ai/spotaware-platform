@@ -15,6 +15,8 @@ import type {
   FinancialSummary,
   FinancialTimelineEvent,
   LedgerEntry,
+  SaleReship,
+  ReshipSummary,
 } from '../../types/financial';
 
 // ── Company Wallet ────────────────────────────────────────────────────────────
@@ -92,6 +94,16 @@ export function getInvestorWallet(data: FinancialData, investorId: string): Inve
 
   const recentActivity = buildTimeline(data, investorId).slice(0, 20);
 
+  // Reship impact — reships on sales belonging to this investor's companies
+  const reships = (data.saleReships ?? []).filter(r => {
+    const sale = data.marketplaceSettlements.find(s => s.id === r.saleId);
+    return sale ? investorCompanyIds.includes(sale.companyId) : false;
+  });
+  const reshipCount = reships.length;
+  const reshipGrossLoss = reships.reduce((acc, r) => acc + computeGrossReshipCost(r), 0);
+  const reshipSupplierRecovery = reships.reduce((acc, r) => acc + r.supplierRecoveredAmount, 0);
+  const reshipNetLoss = reships.reduce((acc, r) => acc + computeNetReshipLoss(r), 0);
+
   return {
     investorId,
     investorName: investor?.name ?? investorId,
@@ -107,6 +119,10 @@ export function getInvestorWallet(data: FinancialData, investorId: string): Inve
     outstandingProfit,
     roi,
     recentActivity,
+    reshipCount,
+    reshipGrossLoss,
+    reshipSupplierRecovery,
+    reshipNetLoss,
   };
 }
 
@@ -204,6 +220,7 @@ export function getLedgerView(data: FinancialData, companyId?: string, investorI
 
 export function getFinancialSummary(data: FinancialData): FinancialSummary {
   const wallets = data.companies.map(c => getCompanyWallet(data, c.id));
+  const reships = data.saleReships ?? [];
 
   return {
     totalCapitalInvested: wallets.reduce((a, w) => a + w.capitalInvested, 0),
@@ -218,6 +235,10 @@ export function getFinancialSummary(data: FinancialData): FinancialSummary {
     investorCount: data.investors.length,
     activeSettlements: data.marketplaceSettlements.filter(s => s.stage !== 'withdrawn').length,
     wallets,
+    totalReships: reships.length,
+    totalGrossReshipCost: reships.reduce((a, r) => a + computeGrossReshipCost(r), 0),
+    totalNetReshipLoss: reships.reduce((a, r) => a + computeNetReshipLoss(r), 0),
+    totalSupplierRecovery: reships.reduce((a, r) => a + r.supplierRecoveredAmount, 0),
   };
 }
 
@@ -254,4 +275,36 @@ export function fmt(n: number): string {
 
 export function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// ── Reship Calculations ────────────────────────────────────────────────────────
+
+export function computeGrossReshipCost(r: SaleReship): number {
+  return (
+    r.costs.shippingLabelCost +
+    (r.costs.replacementProductCost * r.qty) +
+    r.costs.packagingCost +
+    r.costs.insuranceCost +
+    r.costs.otherCost
+  );
+}
+
+export function computeNetReshipLoss(r: SaleReship): number {
+  return Math.max(0, computeGrossReshipCost(r) - r.supplierRecoveredAmount);
+}
+
+export function getReshipSummary(data: FinancialData): ReshipSummary {
+  const reships = data.saleReships ?? [];
+  const totalReships = reships.length;
+  const totalGrossReshipCost = reships.reduce((acc, r) => acc + computeGrossReshipCost(r), 0);
+  const totalSupplierRecovery = reships.reduce((acc, r) => acc + r.supplierRecoveredAmount, 0);
+  const totalNetReshipLoss = reships.reduce((acc, r) => acc + computeNetReshipLoss(r), 0);
+  const avgNetReshipLoss = totalReships > 0 ? totalNetReshipLoss / totalReships : 0;
+  return { totalReships, totalGrossReshipCost, totalSupplierRecovery, totalNetReshipLoss, avgNetReshipLoss };
+}
+
+export function getSettlementFinalProfit(settlement: MarketplaceSettlement, reships: SaleReship[]): number {
+  const saleReships = reships.filter(r => r.saleId === settlement.id);
+  const totalNetLoss = saleReships.reduce((acc, r) => acc + computeNetReshipLoss(r), 0);
+  return settlement.amount - (settlement.cog ?? 0) - totalNetLoss;
 }
