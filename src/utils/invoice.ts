@@ -1,10 +1,19 @@
 import type { Invoice } from './storage';
 import { getClients } from './storage';
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function generateInvoiceHTML(inv: Invoice): string {
   const client = getClients().find(c => c.id === inv.clientId);
 
-  const pkgBadge = inv.packageName ? `<div style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:12px;font-weight:600;background:rgba(0,229,255,0.1);color:#00e5ff;border:1px solid rgba(0,229,255,0.2);margin-bottom:16px">📦 Package: ${inv.packageName}</div>` : '';
+  const pkgBadge = inv.packageName ? `<div style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:12px;font-weight:600;background:rgba(0,229,255,0.1);color:#00e5ff;border:1px solid rgba(0,229,255,0.2);margin-bottom:16px">📦 Package: ${escapeHtml(inv.packageName)}</div>` : '';
 
   const typeLabels: Record<string, string> = { package: '📦 Package', addon: '➕ Add-on', monthly: '🔄 Monthly', custom: '🔧 Custom' };
 
@@ -67,11 +76,11 @@ body{margin:0;padding:40px;background:#08090f;color:#e2e4ed;font-family:Inter,sy
     <div style="display:flex;gap:40px;flex-wrap:wrap">
       <div style="flex:1;min-width:180px">
         <div style="font-size:10px;text-transform:uppercase;color:#5a5f7a;letter-spacing:1px;margin-bottom:6px">Bill To</div>
-        <div style="font-size:15px;color:#fff;font-weight:700">${client?.name || 'Client'}</div>
+        <div style="font-size:15px;color:#fff;font-weight:700">${escapeHtml(client?.name || 'Client')}</div>
         <div style="font-size:13px;color:#8b90b0;line-height:1.8;margin-top:4px">
-          ${client?.email || ''}<br>
-          ${client?.company ? `${client.company}<br>` : ''}
-          ${client?.phone ? `📞 ${client.phone}<br>` : ''}
+          ${escapeHtml(client?.email || '')}<br>
+          ${client?.company ? `${escapeHtml(client.company)}<br>` : ''}
+          ${client?.phone ? `📞 ${escapeHtml(client.phone)}<br>` : ''}
         </div>
       </div>
       <div>
@@ -109,7 +118,7 @@ body{margin:0;padding:40px;background:#08090f;color:#e2e4ed;font-family:Inter,sy
     ${inv.note ? `
     <div style="margin-top:24px;padding:16px;background:#131520;border:1px solid #1e2035;border-radius:12px">
       <div style="font-size:10px;text-transform:uppercase;color:#5a5f7a;letter-spacing:1px;margin-bottom:8px">📝 Notes</div>
-      <div style="font-size:13px;color:#8b90b0;line-height:1.7;white-space:pre-wrap">${inv.note}</div>
+      <div style="font-size:13px;color:#8b90b0;line-height:1.7;white-space:pre-wrap">${escapeHtml(inv.note)}</div>
     </div>` : ''}
 
     <!-- TERMS & CONDITIONS -->
@@ -153,7 +162,7 @@ body{margin:0;padding:40px;background:#08090f;color:#e2e4ed;font-family:Inter,sy
     <div style="margin-top:20px;padding:20px;background:#131520;border:1px solid #1e2035;border-radius:12px">
       <div style="font-size:11px;text-transform:uppercase;color:#a78bfa;letter-spacing:1px;margin-bottom:12px;font-weight:600">📜 Memorandum of Understanding (MOU)</div>
       <div style="font-size:11px;color:#6b7094;line-height:1.9">
-        This invoice serves as a binding agreement between <strong style="color:#8b90b0">SpotAware Digital LLC</strong> ("Service Provider") and <strong style="color:#8b90b0">${client?.name || 'Client'}</strong>${client?.company ? ` of <strong style="color:#8b90b0">${client.company}</strong>` : ''} ("Client").<br><br>
+        This invoice serves as a binding agreement between <strong style="color:#8b90b0">SpotAware Digital LLC</strong> ("Service Provider") and <strong style="color:#8b90b0">${escapeHtml(client?.name || 'Client')}</strong>${client?.company ? ` of <strong style="color:#8b90b0">${escapeHtml(client.company)}</strong>` : ''} ("Client").<br><br>
         By making payment against this invoice, the Client acknowledges and agrees to all terms, conditions, deliverables, and timelines outlined herein. This document constitutes the complete agreement between both parties regarding the services described above.<br><br>
         Both parties agree to act in good faith and maintain open communication throughout the project duration. Any modifications to the scope of work must be agreed upon in writing by both parties and may result in adjusted pricing and timelines.
       </div>
@@ -189,5 +198,5 @@ export function emailInvoiceToClient(inv: Invoice, emailSettings: { enabled: boo
       message: `Invoice ${inv.invoiceNumber} for $${inv.total.toLocaleString()} has been sent.\n\nPackage: ${inv.packageName || 'Custom'}\nDue Date: ${inv.dueDate}\nTax (TX ${inv.taxRate}%): $${inv.taxAmount.toFixed(2)}\n\nLogin to your Client Portal to view and download.`,
       client_email: client.email,
     }, emailSettings.publicKey)
-  ).catch(e => console.log('Email failed:', e));
+  ).catch(e => console.error('Email failed:', e));
 }
